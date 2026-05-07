@@ -19,6 +19,8 @@ cmake --build build --target 00_init_SDL3
 cmake --build build --target 01_window
 cmake --build build --target 02_vk_instance
 cmake --build build --target 03_minimal_triangle
+cmake --build build --target 04_triangle_SDL3
+
 ```
 
 ### Run
@@ -27,6 +29,7 @@ cmake --build build --target 03_minimal_triangle
 ./build/Part_01_window/01_window
 ./build/Part_02_vk_instance/02_vk_instance
 ./build/Part_03_minimal_triangle/03_minimal_triangle
+./build/Part_04_triangle_SDL3/04_triangle_SDL3
 ```
 
 ### Clean
@@ -57,6 +60,7 @@ cmake --build build --target 00_init_SDL3
 cmake --build build --target 01_window
 cmake --build build --target 02_vk_instance
 cmake --build build --target 03_minimal_triangle
+cmake --build build --target 04_triangle_SDL3
 ```
 ### Copy .dll to .exe folder
 ```bash
@@ -68,6 +72,7 @@ build\Part_00_init_SDL3\Debug\00_init_SDL3.exe
 build\Part_01_window\Debug\01_window.exe
 build\Part_02_vk_instance\Debug\02_vk_instance.exe
 build\Part_03_minimal_triangle\Debug\03_minimal_triangle.exe
+build\Part_04_triangle_SDL3\Debug\04_triangle_SDL3.exe
 ```
 ### Clean
 ```bash
