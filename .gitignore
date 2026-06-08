@@ -50,3 +50,6 @@ CMakeFiles/
 # Vendored third-party (fetched by setup scripts)
 third_party/
 imgui.ini
+
+# logging data
+trace.log

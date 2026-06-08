@@ -18,6 +18,11 @@
 #define WINDOW_WIDTH 800
 #define WINDOW_HEIGHT 600
 
+#define ENGINE_xzlog(vk_call) \
+    SDL_Log("ENGINE_xz: %s [%s:%d]", vk_call, __FILE__, __LINE__)
+#define ENGINE_xziter_log(vk_call) \
+    SDL_Log("ENGINE_xz.iter: %s [%s:%d]", vk_call, __FILE__, __LINE__)
+
 struct AppState {
     SDL_Window* window = nullptr;
     VkInstance instance = nullptr;
@@ -28,8 +33,6 @@ struct AppState {
     VkSwapchainKHR swapchain = nullptr;
     std::vector<VkImage> images;
     std::vector<VkImageView> image_views;
-    VkRenderPass render_pass = nullptr;
-    std::vector<VkFramebuffer> framebuffers;
     VkPipeline pipeline = nullptr;
     VkPipelineLayout pipeline_layout = nullptr;
     VkCommandPool command_pool = nullptr;
@@ -69,6 +72,7 @@ uint32_t* load_shader_file(const char* filename, size_t* out_size) {
 void init_vulkan(AppState* app) {
     /* --- Vulkan API Version --- */
     uint32_t apiVersion = 0;
+    ENGINE_xzlog("vkEnumerateInstanceVersion");
     vkEnumerateInstanceVersion(&apiVersion);
     SDL_Log("Vulkan API version supported: %d.%d.%d",
         VK_VERSION_MAJOR(apiVersion),
@@ -92,8 +96,10 @@ void init_vulkan(AppState* app) {
 
     /* --- Enumerate Supported Extensions --- */
     uint32_t extCount = 0;
+    ENGINE_xzlog("vkEnumerateInstanceExtensionProperties");
     vkEnumerateInstanceExtensionProperties(NULL, &extCount, NULL);
     std::vector<VkExtensionProperties> supportedInstanceExtensions(extCount);
+    ENGINE_xzlog("vkEnumerateInstanceExtensionProperties");
     vkEnumerateInstanceExtensionProperties(nullptr, &extCount, supportedInstanceExtensions.data());
     SDL_Log("Supported Instance Extensions (%d count):", extCount);
     for (uint32_t i = 0; i < extCount; i++) {
@@ -119,8 +125,10 @@ void init_vulkan(AppState* app) {
 
     /* --- Enumerate Validation Layers --- */
     uint32_t layerCount = 0;
+    ENGINE_xzlog("vkEnumerateInstanceLayerProperties");
     vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
     std::vector<VkLayerProperties> availableLayers(layerCount);
+    ENGINE_xzlog("vkEnumerateInstanceLayerProperties");
     vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
     SDL_Log("Supported Validation Layers (%d count):", layerCount);
     for (uint32_t i = 0; i < layerCount; i++) {
@@ -161,7 +169,7 @@ void init_vulkan(AppState* app) {
         .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
         .pEngineName = "No Engine",
         .engineVersion = VK_MAKE_VERSION(1, 0, 0),
-        .apiVersion = VK_API_VERSION_1_0,
+        .apiVersion = VK_API_VERSION_1_3,
     };
 
     VkInstanceCreateInfo instanceCreateInfo = {
@@ -177,6 +185,7 @@ void init_vulkan(AppState* app) {
     instanceCreateInfo.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
 #endif
 
+    ENGINE_xzlog("vkCreateInstance");
     VkResult result = vkCreateInstance(&instanceCreateInfo, NULL, &app->instance);
     if (result != VK_SUCCESS) {
         SDL_Log("Failed vkCreateInstance! Error code: %d", result);
@@ -194,15 +203,19 @@ void init_vulkan(AppState* app) {
 
     /* --- Physical Device --- */
     uint32_t device_count = 0;
+    ENGINE_xzlog("vkEnumeratePhysicalDevices");
     check_vk(vkEnumeratePhysicalDevices(app->instance, &device_count, NULL), "enumerate count");
     std::vector<VkPhysicalDevice> devices(device_count);
+    ENGINE_xzlog("vkEnumeratePhysicalDevices");
     check_vk(vkEnumeratePhysicalDevices(app->instance, &device_count, devices.data()), "enumerate devices");
     app->physical_device = devices[0];
 
     /* --- Queue Family --- */
     uint32_t qfam_count = 0;
+    ENGINE_xzlog("vkGetPhysicalDeviceQueueFamilyProperties");
     vkGetPhysicalDeviceQueueFamilyProperties(app->physical_device, &qfam_count, NULL);
     std::vector<VkQueueFamilyProperties> qfams(qfam_count);
+    ENGINE_xzlog("vkGetPhysicalDeviceQueueFamilyProperties");
     vkGetPhysicalDeviceQueueFamilyProperties(app->physical_device, &qfam_count, qfams.data());
     for (uint32_t i = 0; i < qfam_count; i++) {
         if (qfams[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
@@ -213,6 +226,7 @@ void init_vulkan(AppState* app) {
 
     /* --- Surface Capabilities --- */
     VkSurfaceCapabilitiesKHR surf_caps;
+    ENGINE_xzlog("vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
     check_vk(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(app->physical_device, app->surface, &surf_caps), "surface caps");
     app->swapchain_extent = surf_caps.currentExtent;
     app->image_count = surf_caps.minImageCount;
@@ -223,8 +237,10 @@ void init_vulkan(AppState* app) {
 
     /* --- Surface Format Selection --- */
     uint32_t format_count = 0;
+    ENGINE_xzlog("vkGetPhysicalDeviceSurfaceFormatsKHR");
     check_vk(vkGetPhysicalDeviceSurfaceFormatsKHR(app->physical_device, app->surface, &format_count, NULL), "format count");
     std::vector<VkSurfaceFormatKHR> formats(format_count);
+    ENGINE_xzlog("vkGetPhysicalDeviceSurfaceFormatsKHR");
     check_vk(vkGetPhysicalDeviceSurfaceFormatsKHR(app->physical_device, app->surface, &format_count, formats.data()), "formats");
     SDL_Log("Supported Surface Formats (%d count):", format_count);
     for (uint32_t i = 0; i < format_count; i++) {
@@ -252,8 +268,10 @@ void init_vulkan(AppState* app) {
 
     /* --- Present Mode Selection --- */
     uint32_t mode_count = 0;
+    ENGINE_xzlog("vkGetPhysicalDeviceSurfacePresentModesKHR");
     check_vk(vkGetPhysicalDeviceSurfacePresentModesKHR(app->physical_device, app->surface, &mode_count, NULL), "mode count");
     std::vector<VkPresentModeKHR> modes(mode_count);
+    ENGINE_xzlog("vkGetPhysicalDeviceSurfacePresentModesKHR");
     check_vk(vkGetPhysicalDeviceSurfacePresentModesKHR(app->physical_device, app->surface, &mode_count, modes.data()), "modes");
     VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
 
@@ -273,15 +291,23 @@ void init_vulkan(AppState* app) {
     deviceExtensions.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
 #endif
 
+    VkPhysicalDeviceDynamicRenderingFeatures dynamic_rendering_feature = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES,
+        .dynamicRendering = VK_TRUE,
+    };
+
     VkDeviceCreateInfo device_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .pNext = &dynamic_rendering_feature,
         .queueCreateInfoCount = 1,
         .pQueueCreateInfos = &queue_info,
         .enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size()),
         .ppEnabledExtensionNames = deviceExtensions.data(),
     };
 
+    ENGINE_xzlog("vkCreateDevice");
     check_vk(vkCreateDevice(app->physical_device, &device_info, NULL, &app->device), "vkCreateDevice");
+    ENGINE_xzlog("vkGetDeviceQueue");
     vkGetDeviceQueue(app->device, app->graphics_family, 0, &app->graphics_queue);
 
     /* --- Swapchain --- */
@@ -319,12 +345,15 @@ void init_vulkan(AppState* app) {
         .clipped = VK_TRUE,
     };
 
+    ENGINE_xzlog("vkCreateSwapchainKHR");
     check_vk(vkCreateSwapchainKHR(app->device, &swapchain_info, NULL, &app->swapchain), "vkCreateSwapchainKHR");
 
     /* --- Swapchain Images & Image Views --- */
+    ENGINE_xzlog("vkGetSwapchainImagesKHR");
     check_vk(vkGetSwapchainImagesKHR(app->device, app->swapchain, &app->image_count, NULL), "image count");
     app->images.resize(app->image_count);
     app->image_views.resize(app->image_count);
+    ENGINE_xzlog("vkGetSwapchainImagesKHR");
     check_vk(vkGetSwapchainImagesKHR(app->device, app->swapchain, &app->image_count, app->images.data()), "images");
 
     for (uint32_t i = 0; i < app->image_count; i++) {
@@ -336,6 +365,7 @@ void init_vulkan(AppState* app) {
             .components = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A},
             .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
         };
+        ENGINE_xzlog("vkCreateImageView");
         check_vk(vkCreateImageView(app->device, &view_info, NULL, &app->image_views[i]), "vkCreateImageView");
     }
 
@@ -344,45 +374,6 @@ void init_vulkan(AppState* app) {
     SDL_Log("\tSwapchain ImageCount: %d", app->image_count);
     SDL_Log("\tSwapchain Present Mode: %d", present_mode);
 
-    /* --- Render Pass --- */
-    VkAttachmentDescription attachment = {
-        .format = app->surface_format.format,
-        .samples = VK_SAMPLE_COUNT_1_BIT,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-        .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-    };
-
-    VkAttachmentReference color_ref = {.attachment = 0, .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-    VkSubpassDescription subpass = {.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS, .colorAttachmentCount = 1, .pColorAttachments = &color_ref};
-    
-    VkRenderPassCreateInfo render_pass_info = {
-        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-        .attachmentCount = 1,
-        .pAttachments = &attachment,
-        .subpassCount = 1,
-        .pSubpasses = &subpass,
-    };
-
-    check_vk(vkCreateRenderPass(app->device, &render_pass_info, NULL, &app->render_pass), "vkCreateRenderPass");
-
-    /* --- Framebuffers --- */
-    app->framebuffers.resize(app->image_count);
-    for (uint32_t i = 0; i < app->image_count; i++) {
-        VkFramebufferCreateInfo fb_info = {
-            .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-            .renderPass = app->render_pass,
-            .attachmentCount = 1,
-            .pAttachments = &app->image_views[i],
-            .width = app->swapchain_extent.width,
-            .height = app->swapchain_extent.height,
-            .layers = 1,
-        };
-        check_vk(vkCreateFramebuffer(app->device, &fb_info, NULL, &app->framebuffers[i]), "vkCreateFramebuffer");
-    }
 #ifdef TARGET_OS_IPHONE
     #define SHADER_OUTPUT_DIR ""
 #endif
@@ -394,13 +385,16 @@ void init_vulkan(AppState* app) {
 
     VkShaderModuleCreateInfo vert_info = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = vert_size, .pCode = vert_spv};
     VkShaderModuleCreateInfo frag_info = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = frag_size, .pCode = frag_spv};
-    
+
     VkShaderModule vert_shader, frag_shader;
+    ENGINE_xzlog("vkCreateShaderModule");
     check_vk(vkCreateShaderModule(app->device, &vert_info, NULL, &vert_shader), "vert shader");
+    ENGINE_xzlog("vkCreateShaderModule");
     check_vk(vkCreateShaderModule(app->device, &frag_info, NULL, &frag_shader), "frag shader");
 
     /* --- Pipeline Layout --- */
     VkPipelineLayoutCreateInfo layout_info = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    ENGINE_xzlog("vkCreatePipelineLayout");
     check_vk(vkCreatePipelineLayout(app->device, &layout_info, NULL, &app->pipeline_layout), "vkCreatePipelineLayout");
 
     /* --- Graphics Pipeline --- */
@@ -422,8 +416,15 @@ void init_vulkan(AppState* app) {
     VkPipelineColorBlendAttachmentState color_blend_attachment = {.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT};
     VkPipelineColorBlendStateCreateInfo color_blending = {.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, .attachmentCount = 1, .pAttachments = &color_blend_attachment};
 
+    VkPipelineRenderingCreateInfo pipeline_rendering_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+        .colorAttachmentCount = 1,
+        .pColorAttachmentFormats = &app->surface_format.format,
+    };
+
     VkGraphicsPipelineCreateInfo pipeline_info = {
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .pNext = &pipeline_rendering_info,
         .stageCount = 2,
         .pStages = stages,
         .pVertexInputState = &vertex_input,
@@ -433,10 +434,9 @@ void init_vulkan(AppState* app) {
         .pMultisampleState = &multisampling,
         .pColorBlendState = &color_blending,
         .layout = app->pipeline_layout,
-        .renderPass = app->render_pass,
-        .subpass = 0,
     };
 
+    ENGINE_xzlog("vkCreateGraphicsPipelines");
     check_vk(vkCreateGraphicsPipelines(app->device, VK_NULL_HANDLE, 1, &pipeline_info, NULL, &app->pipeline), "vkCreateGraphicsPipelines");
 
     /* --- Command Pool & Buffers --- */
@@ -445,7 +445,20 @@ void init_vulkan(AppState* app) {
         .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
         .queueFamilyIndex = app->graphics_family,
     };
+    ENGINE_xzlog("vkCreateCommandPool");
     check_vk(vkCreateCommandPool(app->device, &pool_info, NULL, &app->command_pool), "vkCreateCommandPool");
+    
+    /* --- Synchronization --- */
+    VkSemaphoreCreateInfo sem_info = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+    VkFenceCreateInfo fence_info = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .flags = VK_FENCE_CREATE_SIGNALED_BIT};
+
+    ENGINE_xzlog("vkCreateSemaphore");
+    check_vk(vkCreateSemaphore(app->device, &sem_info, NULL, &app->image_available_sem), "image_available");
+    ENGINE_xzlog("vkCreateSemaphore");
+    check_vk(vkCreateSemaphore(app->device, &sem_info, NULL, &app->render_finished_sem), "render_finished");
+    ENGINE_xzlog("vkCreateFence");
+    check_vk(vkCreateFence(app->device, &fence_info, NULL, &app->in_flight_fence), "in_flight");
+
 
     app->command_buffers.resize(app->image_count);
     VkCommandBufferAllocateInfo alloc_info = {
@@ -454,70 +467,123 @@ void init_vulkan(AppState* app) {
         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = app->image_count,
     };
+    ENGINE_xzlog("vkAllocateCommandBuffers");
     check_vk(vkAllocateCommandBuffers(app->device, &alloc_info, app->command_buffers.data()), "vkAllocateCommandBuffers");
-
+    
     /* --- Record Command Buffers --- */
     for (uint32_t i = 0; i < app->image_count; i++) {
         VkCommandBufferBeginInfo begin_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        ENGINE_xzlog("vkBeginCommandBuffer");
         check_vk(vkBeginCommandBuffer(app->command_buffers[i], &begin_info), "vkBeginCommandBuffer");
 
-        VkClearValue clear = {{0.0f, 0.0f, 0.0f, 1.0f}};
-        VkRenderPassBeginInfo render_pass_begin = {
-            .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-            .renderPass = app->render_pass,
-            .framebuffer = app->framebuffers[i],
+        // Transition: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL
+        VkImageMemoryBarrier barrier_to_render = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = 0,
+            .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = app->images[i],
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+        };
+        vkCmdPipelineBarrier(app->command_buffers[i],
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &barrier_to_render);
+
+        VkRenderingAttachmentInfo color_attachment = {
+            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .imageView = app->image_views[i],
+            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .clearValue = {{0.0f, 0.0f, 0.0f, 1.0f}},
+        };
+        VkRenderingInfo rendering_info = {
+            .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
             .renderArea = {{0, 0}, app->swapchain_extent},
-            .clearValueCount = 1,
-            .pClearValues = &clear,
+            .layerCount = 1,
+            .colorAttachmentCount = 1,
+            .pColorAttachments = &color_attachment,
         };
 
-        vkCmdBeginRenderPass(app->command_buffers[i], &render_pass_begin, VK_SUBPASS_CONTENTS_INLINE);
+        ENGINE_xzlog("vkCmdBeginRendering");
+        vkCmdBeginRendering(app->command_buffers[i], &rendering_info);
+        ENGINE_xzlog("vkCmdBindPipeline");
         vkCmdBindPipeline(app->command_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, app->pipeline);
+        ENGINE_xzlog("vkCmdDraw");
         vkCmdDraw(app->command_buffers[i], 3, 1, 0, 0);
-        vkCmdEndRenderPass(app->command_buffers[i]);
+        ENGINE_xzlog("vkCmdEndRendering");
+        vkCmdEndRendering(app->command_buffers[i]);
 
+        // Transition: COLOR_ATTACHMENT_OPTIMAL → PRESENT_SRC_KHR
+        VkImageMemoryBarrier barrier_to_present = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            .dstAccessMask = 0,
+            .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = app->images[i],
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+        };
+        vkCmdPipelineBarrier(app->command_buffers[i],
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &barrier_to_present);
+
+        ENGINE_xzlog("vkEndCommandBuffer");
         check_vk(vkEndCommandBuffer(app->command_buffers[i]), "vkEndCommandBuffer");
     }
 
-    /* --- Synchronization --- */
-    VkSemaphoreCreateInfo sem_info = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-    VkFenceCreateInfo fence_info = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .flags = VK_FENCE_CREATE_SIGNALED_BIT};
-    
-    check_vk(vkCreateSemaphore(app->device, &sem_info, NULL, &app->image_available_sem), "image_available");
-    check_vk(vkCreateSemaphore(app->device, &sem_info, NULL, &app->render_finished_sem), "render_finished");
-    check_vk(vkCreateFence(app->device, &fence_info, NULL, &app->in_flight_fence), "in_flight");
-
     free(vert_spv);
     free(frag_spv);
+
+    vkDestroyShaderModule(app->device, vert_shader, NULL);
+    vkDestroyShaderModule(app->device, frag_shader, NULL);
 }
 
 void cleanup_vulkan(AppState* app) {
+    ENGINE_xzlog("vkDeviceWaitIdle");
     vkDeviceWaitIdle(app->device);
 
+    ENGINE_xzlog("vkDestroySemaphore");
     vkDestroySemaphore(app->device, app->image_available_sem, NULL);
+    ENGINE_xzlog("vkDestroySemaphore");
     vkDestroySemaphore(app->device, app->render_finished_sem, NULL);
+    ENGINE_xzlog("vkDestroyFence");
     vkDestroyFence(app->device, app->in_flight_fence, NULL);
+    ENGINE_xzlog("vkDestroyCommandPool");
     vkDestroyCommandPool(app->device, app->command_pool, NULL);
+    ENGINE_xzlog("vkDestroyPipeline");
     vkDestroyPipeline(app->device, app->pipeline, NULL);
+    ENGINE_xzlog("vkDestroyPipelineLayout");
     vkDestroyPipelineLayout(app->device, app->pipeline_layout, NULL);
-    for (auto& framebuffer : app->framebuffers) {
-        vkDestroyFramebuffer(app->device, framebuffer, NULL);
-    }
     for (auto& image_view : app->image_views) {
+        ENGINE_xzlog("vkDestroyImageView");
         vkDestroyImageView(app->device, image_view, NULL);
     }
-    vkDestroyRenderPass(app->device, app->render_pass, NULL);
+    ENGINE_xzlog("vkDestroySwapchainKHR");
     vkDestroySwapchainKHR(app->device, app->swapchain, NULL);
+    ENGINE_xzlog("vkDestroyDevice");
     vkDestroyDevice(app->device, NULL);
+    ENGINE_xzlog("vkDestroySurfaceKHR");
     vkDestroySurfaceKHR(app->instance, app->surface, NULL);
+    ENGINE_xzlog("vkDestroyInstance");
     vkDestroyInstance(app->instance, NULL);
 }
 
 void render_frame(AppState* app) {
+    ENGINE_xziter_log("vkWaitForFences");
     check_vk(vkWaitForFences(app->device, 1, &app->in_flight_fence, VK_TRUE, UINT64_MAX), "vkWaitForFences");
+    ENGINE_xziter_log("vkResetFences");
     check_vk(vkResetFences(app->device, 1, &app->in_flight_fence), "vkResetFences");
 
     uint32_t image_index;
+    ENGINE_xziter_log("vkAcquireNextImageKHR");
     check_vk(vkAcquireNextImageKHR(app->device, app->swapchain, UINT64_MAX, app->image_available_sem, VK_NULL_HANDLE, &image_index), "vkAcquireNextImageKHR");
 
     VkPipelineStageFlags wait_stages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
@@ -531,6 +597,7 @@ void render_frame(AppState* app) {
         .signalSemaphoreCount = 1,
         .pSignalSemaphores = &app->render_finished_sem,
     };
+    ENGINE_xziter_log("vkQueueSubmit");
     check_vk(vkQueueSubmit(app->graphics_queue, 1, &submit_info, app->in_flight_fence), "vkQueueSubmit");
 
     VkPresentInfoKHR present_info = {
@@ -541,6 +608,7 @@ void render_frame(AppState* app) {
         .pSwapchains = &app->swapchain,
         .pImageIndices = &image_index,
     };
+    ENGINE_xziter_log("vkQueuePresentKHR");
     check_vk(vkQueuePresentKHR(app->graphics_queue, &present_info), "vkQueuePresentKHR");
 }
 
