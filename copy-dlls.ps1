@@ -9,9 +9,10 @@ if (-Not (Test-Path $source_dll)) {
 $targets = @(
     "build\Part_00_init_SDL3\Debug\",
     "build\Part_01_window\Debug\",
-    "build\Part_02_vk_instance\Debug\"
-    "build\Part_03_minimal_triangle\Debug\"
-    "build\Part_04_imgui\Debug\"
+    "build\Part_02_vk_instance\Debug\",
+    "build\Part_03_minimal_triangle\Debug\",
+    "build\Part_04_imgui\Debug\",
+    "build\Part_05_vertex_buffer\Debug\"
 )
 
 foreach ($target in $targets) {

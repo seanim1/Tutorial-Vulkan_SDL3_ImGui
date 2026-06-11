@@ -20,18 +20,20 @@ jobs:
       - name: build
         run: cmake --build build
   windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: install vcpkg deps
-        run: vcpkg install sdl3:x64-windows vulkan:x64-windows
-        env:
-          VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-      - name: configure
-        run: |
-          cmake -S . -B build `
-            -G "Visual Studio 17 2022" `
-            -A x64 `
-            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
-      - name: build
-        run: cmake --build build --config Debug
+      runs-on: windows-latest
+      steps:
+        - uses: actions/checkout@v4
+        - name: clone third party
+          run: git clone --depth 1 https://github.com/ocornut/imgui.git third_party\imgui
+        - name: install vcpkg deps
+          run: vcpkg install sdl3:x64-windows vulkan:x64-windows
+          env:
+            VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+        - name: configure
+          run: |
+            cmake -S . -B build `
+              -G "Visual Studio 17 2022" `
+              -A x64 `
+              "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+        - name: build
+          run: cmake --build build --config Debug

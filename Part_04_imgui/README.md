@@ -1,5 +1,9 @@
 # IMGUI integration
 
+## Updated:
+main.cpp
+
+## Blog?
 I was running into segfault in 
 ImGui_ImplVulkan_Init -> ImGui_ImplVulkan_CreateDeviceObjects -> ImGui_ImplVulkan_CreateSamplerDS
 On the second call of vkUpdateDescriptorSets, I was Segfaulting on the second call of this because I only had 1 descriptorCount for a pool combined image sampler

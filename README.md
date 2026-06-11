@@ -23,6 +23,7 @@ cmake --build build --target 01_window
 cmake --build build --target 02_vk_instance
 cmake --build build --target 03_minimal_triangle
 cmake --build build --target 04_imgui
+cmake --build build --target 05_vertex_buffer
 ```
 
 ### Run
@@ -32,6 +33,7 @@ cmake --build build --target 04_imgui
 ./build/Part_02_vk_instance/02_vk_instance
 ./build/Part_03_minimal_triangle/03_minimal_triangle
 ./build/Part_04_imgui/04_imgui
+./build/Part_05_vertex_buffer/05_vertex_buffer
 ```
 ### Clean
 ```bash
