@@ -15,6 +15,11 @@ if [ ! -d third_party/SDL3 ]; then
     git clone --depth 1 https://github.com/libsdl-org/SDL.git third_party/SDL3
 fi
 
+if [ ! -d third_party/imgui ]; then
+    mkdir -p third_party
+    git clone --depth 1 https://github.com/ocornut/imgui.git third_party/imgui
+fi
+
 (
     cd third_party/SDL3
     mkdir -p build

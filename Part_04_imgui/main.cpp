@@ -15,6 +15,12 @@
     #include <vulkan/vulkan_beta.h>
 #endif
 
+// --- ImGui ---
+#include "imgui.h"
+#include "imgui_impl_sdl3.h"
+#include "imgui_impl_vulkan.h"
+// -------------
+
 #define WINDOW_WIDTH 800
 #define WINDOW_HEIGHT 600
 
@@ -36,7 +42,8 @@ struct AppState {
     VkPipeline pipeline = nullptr;
     VkPipelineLayout pipeline_layout = nullptr;
     VkCommandPool command_pool = nullptr;
-    std::vector<VkCommandBuffer> command_buffers;
+    std::vector<VkCommandBuffer> command_buffers;       // scene (no final barrier)
+    std::vector<VkCommandBuffer> imgui_command_buffers; // imgui + final barrier
     VkSemaphore image_available_sem = nullptr;
     VkSemaphore render_finished_sem = nullptr;
     VkFence in_flight_fence = nullptr;
@@ -44,6 +51,13 @@ struct AppState {
     uint32_t graphics_family = 0;
     VkExtent2D swapchain_extent = {};
     VkSurfaceFormatKHR surface_format = {};
+
+    // --- ImGui ---
+    VkDescriptorPool imgui_descriptor_pool = nullptr;
+    bool show_gui = true;
+    // GUI state
+    float clear_r = 0.0f, clear_g = 0.0f, clear_b = 0.0f;
+    // -------------
 };
 
 void check_vk(VkResult result, const char* op) {
@@ -69,6 +83,59 @@ uint32_t* load_shader_file(const char* filename, size_t* out_size) {
     return data;
 }
 
+// -----------------------------------------------------------------------
+// NEW: allocate imgui command buffers and record them (called after init)
+// The scene command buffers no longer emit the PRESENT_SRC barrier —
+// the imgui command buffer does that at the end instead.
+// -----------------------------------------------------------------------
+void record_imgui_command_buffers(AppState* app, uint32_t i)
+{
+    VkCommandBufferBeginInfo begin = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT,
+    };
+    check_vk(vkBeginCommandBuffer(app->imgui_command_buffers[i], &begin),
+             "imgui begin");
+
+    VkRenderingAttachmentInfo color_attachment = {
+        .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .imageView   = app->image_views[i],
+        .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .loadOp      = VK_ATTACHMENT_LOAD_OP_LOAD,
+        .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
+    };
+    VkRenderingInfo rendering_info = {
+        .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
+        .renderArea           = {{0, 0}, app->swapchain_extent},
+        .layerCount           = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments    = &color_attachment,
+    };
+    vkCmdBeginRendering(app->imgui_command_buffers[i], &rendering_info);
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(),
+                                    app->imgui_command_buffers[i]);
+    vkCmdEndRendering(app->imgui_command_buffers[i]);
+
+    VkImageMemoryBarrier barrier_to_present = {
+        .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask       = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        .dstAccessMask       = 0,
+        .oldLayout           = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .newLayout           = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image               = app->images[i],
+        .subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+    };
+    vkCmdPipelineBarrier(app->imgui_command_buffers[i],
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &barrier_to_present);
+
+    check_vk(vkEndCommandBuffer(app->imgui_command_buffers[i]),
+             "imgui end");
+}
+
 void init_vulkan(AppState* app) {
     /* --- Vulkan API Version --- */
     uint32_t apiVersion = 0;
@@ -87,7 +154,6 @@ void init_vulkan(AppState* app) {
 #elif defined(VK_USE_PLATFORM_XLIB_KHR)
         VK_KHR_XLIB_SURFACE_EXTENSION_NAME,
 #elif defined(__APPLE__)
-        // On iOS/macOS with MoltenVK, try both Metal surface extensions
         "VK_EXT_metal_surface",
         "VK_MVK_ios_surface",
         VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME,
@@ -441,7 +507,7 @@ void init_vulkan(AppState* app) {
     };
     ENGINE_xzlog("vkCreateCommandPool");
     check_vk(vkCreateCommandPool(app->device, &pool_info, NULL, &app->command_pool), "vkCreateCommandPool");
-    
+
     /* --- Synchronization --- */
     VkSemaphoreCreateInfo sem_info = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     VkFenceCreateInfo fence_info = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .flags = VK_FENCE_CREATE_SIGNALED_BIT};
@@ -453,7 +519,6 @@ void init_vulkan(AppState* app) {
     ENGINE_xzlog("vkCreateFence");
     check_vk(vkCreateFence(app->device, &fence_info, NULL, &app->in_flight_fence), "in_flight");
 
-
     app->command_buffers.resize(app->image_count);
     VkCommandBufferAllocateInfo alloc_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -463,8 +528,19 @@ void init_vulkan(AppState* app) {
     };
     ENGINE_xzlog("vkAllocateCommandBuffers");
     check_vk(vkAllocateCommandBuffers(app->device, &alloc_info, app->command_buffers.data()), "vkAllocateCommandBuffers");
-    
-    /* --- Record Command Buffers --- */
+
+    /* --- NEW: Allocate imgui command buffers --- */
+    app->imgui_command_buffers.resize(app->image_count);
+    VkCommandBufferAllocateInfo imgui_alloc_info = alloc_info; // same pool, same count
+    imgui_alloc_info.commandBufferCount = app->image_count;
+    check_vk(vkAllocateCommandBuffers(app->device, &imgui_alloc_info,
+                                      app->imgui_command_buffers.data()),
+             "imgui cmd bufs");
+
+    /* --- Record Command Buffers ---
+     * Only change: the scene cmd buf no longer emits the PRESENT_SRC barrier.
+     * That barrier now lives in the imgui cmd buf
+     */
     for (uint32_t i = 0; i < app->image_count; i++) {
         VkCommandBufferBeginInfo begin_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         ENGINE_xzlog("vkBeginCommandBuffer");
@@ -512,22 +588,7 @@ void init_vulkan(AppState* app) {
         ENGINE_xzlog("vkCmdEndRendering");
         vkCmdEndRendering(app->command_buffers[i]);
 
-        // Transition: COLOR_ATTACHMENT_OPTIMAL → PRESENT_SRC_KHR
-        VkImageMemoryBarrier barrier_to_present = {
-            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-            .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-            .dstAccessMask = 0,
-            .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .image = app->images[i],
-            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
-        };
-        vkCmdPipelineBarrier(app->command_buffers[i],
-            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-            0, 0, nullptr, 0, nullptr, 1, &barrier_to_present);
+        // NOTE: PRESENT_SRC barrier removed — imgui cmd buf handles it now
 
         ENGINE_xzlog("vkEndCommandBuffer");
         check_vk(vkEndCommandBuffer(app->command_buffers[i]), "vkEndCommandBuffer");
@@ -535,14 +596,69 @@ void init_vulkan(AppState* app) {
 
     free(vert_spv);
     free(frag_spv);
-
     vkDestroyShaderModule(app->device, vert_shader, NULL);
     vkDestroyShaderModule(app->device, frag_shader, NULL);
+
+    /* ------------------------------------------------------------------ */
+    /* NEW: ImGui init                                                      */
+    /* ------------------------------------------------------------------ */
+
+    // Descriptor pool for ImGui
+    VkDescriptorPoolSize pool_sizes[] = {
+        { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, IMGUI_IMPL_VULKAN_MINIMUM_SAMPLED_IMAGE_POOL_SIZE },
+        { VK_DESCRIPTOR_TYPE_SAMPLER,       IMGUI_IMPL_VULKAN_MINIMUM_SAMPLER_POOL_SIZE },
+    };
+    VkDescriptorPoolCreateInfo dp_info = {
+        .sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .flags         = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+        .maxSets       = IMGUI_IMPL_VULKAN_MINIMUM_SAMPLED_IMAGE_POOL_SIZE +
+                         IMGUI_IMPL_VULKAN_MINIMUM_SAMPLER_POOL_SIZE,
+        .poolSizeCount = 2,
+        .pPoolSizes    = pool_sizes,
+    };
+    check_vk(vkCreateDescriptorPool(app->device, &dp_info, nullptr,
+                                    &app->imgui_descriptor_pool),
+             "imgui descriptor pool");
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui::StyleColorsDark();
+
+    ImGui_ImplSDL3_InitForVulkan(app->window);
+
+    ImGui_ImplVulkan_InitInfo imgui_vk_info = {};
+    imgui_vk_info.ApiVersion          = VK_API_VERSION_1_3;
+    imgui_vk_info.Instance            = app->instance;
+    imgui_vk_info.PhysicalDevice      = app->physical_device;
+    imgui_vk_info.Device              = app->device;
+    imgui_vk_info.QueueFamily         = app->graphics_family;
+    imgui_vk_info.Queue               = app->graphics_queue;
+    imgui_vk_info.DescriptorPool      = app->imgui_descriptor_pool;
+    imgui_vk_info.MinImageCount       = app->image_count;
+    imgui_vk_info.ImageCount          = app->image_count;
+    imgui_vk_info.UseDynamicRendering = true;
+
+    // Everything that was top-level is now inside PipelineInfoMain
+    imgui_vk_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    imgui_vk_info.PipelineInfoMain.PipelineRenderingCreateInfo = {
+        .sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+        .colorAttachmentCount    = 1,
+        .pColorAttachmentFormats = &app->surface_format.format,
+    };
+
+    ImGui_ImplVulkan_Init(&imgui_vk_info);
 }
 
 void cleanup_vulkan(AppState* app) {
     ENGINE_xzlog("vkDeviceWaitIdle");
     vkDeviceWaitIdle(app->device);
+
+    // --- ImGui cleanup ---
+    ImGui_ImplVulkan_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
+    ImGui::DestroyContext();
+    vkDestroyDescriptorPool(app->device, app->imgui_descriptor_pool, nullptr);
+    // ---------------------
 
     ENGINE_xzlog("vkDestroySemaphore");
     vkDestroySemaphore(app->device, app->image_available_sem, NULL);
@@ -570,6 +686,26 @@ void cleanup_vulkan(AppState* app) {
     vkDestroyInstance(app->instance, NULL);
 }
 
+// -----------------------------------------------------------------------
+// NEW: build ImGui draw data for this frame
+// -----------------------------------------------------------------------
+void update_gui(AppState* app)
+{
+    ImGui_ImplVulkan_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
+    ImGui::NewFrame();
+
+    if (app->show_gui) {  // ← only draw widgets when visible
+        ImGui::Begin("Hello Triangle", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+        ImGui::Text("Press T key to toggle GUI");
+        ImGui::Separator();
+        ImGui::ColorEdit3("Clear color", &app->clear_r);
+        ImGui::Text("Application average %.1f FPS", ImGui::GetIO().Framerate);
+        ImGui::End();
+    }
+    ImGui::Render();  // always call — empty draw data when false
+}
+
 void render_frame(AppState* app) {
     ENGINE_xziter_log("vkWaitForFences");
     check_vk(vkWaitForFences(app->device, 1, &app->in_flight_fence, VK_TRUE, UINT64_MAX), "vkWaitForFences");
@@ -580,14 +716,24 @@ void render_frame(AppState* app) {
     ENGINE_xziter_log("vkAcquireNextImageKHR");
     check_vk(vkAcquireNextImageKHR(app->device, app->swapchain, UINT64_MAX, app->image_available_sem, VK_NULL_HANDLE, &image_index), "vkAcquireNextImageKHR");
 
+    // Build ImGui draw data, then (re)record the imgui command buffer for this image
+    update_gui(app);
+    record_imgui_command_buffers(app, image_index); // cheap: just re-records draw data into cmd buf
+
+    // Submit scene + imgui command buffers together
+    VkCommandBuffer cmd_bufs[] = {
+        app->command_buffers[image_index],
+        app->imgui_command_buffers[image_index],
+    };
+
     VkPipelineStageFlags wait_stages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
     VkSubmitInfo submit_info = {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .waitSemaphoreCount = 1,
         .pWaitSemaphores = &app->image_available_sem,
         .pWaitDstStageMask = wait_stages,
-        .commandBufferCount = 1,
-        .pCommandBuffers = &app->command_buffers[image_index],
+        .commandBufferCount = 2,           // scene + imgui
+        .pCommandBuffers = cmd_bufs,
         .signalSemaphoreCount = 1,
         .pSignalSemaphores = &app->render_finished_sem,
     };
@@ -616,7 +762,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
     }
 
     app = std::unique_ptr<AppState>((AppState*)*appstate);
-    app->window = SDL_CreateWindow("Part 03 - Vulkan Triangle", WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_VULKAN);
+    app->window = SDL_CreateWindow("Part 03 - Vulkan Triangle + ImGui", WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_VULKAN);
     if (!app->window) {
         SDL_Log("Window creation failed: %s", SDL_GetError());
         SDL_Quit();
@@ -630,7 +776,17 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
 }
 
 SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
-    return (event->type == SDL_EVENT_QUIT) ? SDL_APP_SUCCESS : SDL_APP_CONTINUE;
+    ImGui_ImplSDL3_ProcessEvent(event);
+
+    // toggle GUI with T
+    if (event->type == SDL_EVENT_KEY_DOWN &&
+        event->key.scancode == SDL_SCANCODE_T) {
+        ((AppState*)appstate)->show_gui = !((AppState*)appstate)->show_gui;
+    }
+
+    if (event->type == SDL_EVENT_QUIT)
+        return SDL_APP_SUCCESS;
+    return SDL_APP_CONTINUE;
 }
 
 SDL_AppResult SDL_AppIterate(void* appstate) {

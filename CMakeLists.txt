@@ -27,7 +27,24 @@ elseif(UNIX)
     target_compile_definitions(vulkan_deps INTERFACE VK_USE_PLATFORM_XLIB_KHR)
 endif()
 
+# --- ImGui ---
+add_library(imgui STATIC
+    third_party/imgui/imgui.cpp
+    third_party/imgui/imgui_draw.cpp
+    third_party/imgui/imgui_tables.cpp
+    third_party/imgui/imgui_widgets.cpp
+    third_party/imgui/backends/imgui_impl_sdl3.cpp
+    third_party/imgui/backends/imgui_impl_vulkan.cpp
+)
+target_include_directories(imgui PUBLIC
+    third_party/imgui
+    third_party/imgui/backends
+)
+target_link_libraries(imgui PUBLIC SDL3::SDL3 Vulkan::Vulkan)
+# -------------
+
 add_subdirectory(Part_00_init_SDL3)
 add_subdirectory(Part_01_window)
 add_subdirectory(Part_02_vk_instance)
 add_subdirectory(Part_03_minimal_triangle)
+add_subdirectory(Part_04_imgui)

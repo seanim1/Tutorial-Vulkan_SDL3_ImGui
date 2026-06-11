@@ -16,16 +16,23 @@ foreach ($pkg in $packages) {
 }
 
 if (-Not (Test-Path "third_party\SDL3")) {
+    New-Item -ItemType Directory -Force -Path third_party | Out-Null
     git clone --depth 1 https://github.com/libsdl-org/SDL.git third_party\SDL3
 }
 
+if (-Not (Test-Path "third_party\imgui")) {
+    New-Item -ItemType Directory -Force -Path third_party | Out-Null
+    git clone --depth 1 https://github.com/ocornut/imgui.git third_party\imgui
+}
+
 if (-Not (Test-Path "third_party\SDL3\build")) {
-    cd third_party\SDL3
-    mkdir build
-    cd build
+    Push-Location third_party\SDL3
+    New-Item -ItemType Directory -Force -Path build | Out-Null
+    Push-Location build
     cmake .. -G "Visual Studio 17 2022" -A x64
     cmake --build . --config Debug
-    cd ..\..\..
+    Pop-Location
+    Pop-Location
 }
 
 $toolchain = "C:\vcpkg\scripts\buildsystems\vcpkg.cmake"

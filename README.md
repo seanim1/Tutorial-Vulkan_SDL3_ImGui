@@ -22,6 +22,7 @@ cmake --build build --target 00_init_SDL3
 cmake --build build --target 01_window
 cmake --build build --target 02_vk_instance
 cmake --build build --target 03_minimal_triangle
+cmake --build build --target 04_imgui
 ```
 
 ### Run
@@ -30,6 +31,7 @@ cmake --build build --target 03_minimal_triangle
 ./build/Part_01_window/01_window
 ./build/Part_02_vk_instance/02_vk_instance
 ./build/Part_03_minimal_triangle/03_minimal_triangle
+./build/Part_04_imgui/04_imgui
 ```
 ### Clean
 ```bash
