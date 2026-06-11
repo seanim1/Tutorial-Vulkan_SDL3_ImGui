@@ -9,31 +9,41 @@ jobs:
         run: bash setup_linux.sh
       - name: build
         run: cmake --build build
+
   macos:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: setup
         run: bash setup_macos.sh
+      - name: install glslang
+        run: brew install glslang
       - name: verify SDL3
         run: ls -la third_party/SDL3/build
       - name: build
         run: cmake --build build
+
   windows:
-      runs-on: windows-latest
-      steps:
-        - uses: actions/checkout@v4
-        - name: clone third party
-          run: git clone --depth 1 https://github.com/ocornut/imgui.git third_party\imgui
-        - name: install vcpkg deps
-          run: vcpkg install sdl3:x64-windows vulkan:x64-windows
-          env:
-            VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-        - name: configure
-          run: |
-            cmake -S . -B build `
-              -G "Visual Studio 17 2022" `
-              -A x64 `
-              "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
-        - name: build
-          run: cmake --build build --config Debug
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: clone third party
+        run: git clone --depth 1 https://github.com/ocornut/imgui.git third_party\imgui
+      - name: install vulkan sdk
+        run: |
+          $url = "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe"
+          Invoke-WebRequest -Uri $url -OutFile vulkan-sdk.exe
+          Start-Process -FilePath vulkan-sdk.exe -ArgumentList "--accept-licenses --default-answer --confirm-command install" -Wait
+          echo "C:\VulkanSDK\$(Get-ChildItem C:\VulkanSDK | Select-Object -Last 1 -ExpandProperty Name)\Bin" >> $env:GITHUB_PATH
+      - name: install vcpkg deps
+        run: vcpkg install sdl3:x64-windows vulkan:x64-windows
+        env:
+          VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+      - name: configure
+        run: |
+          cmake -S . -B build `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+      - name: build
+        run: cmake --build build --config Debug

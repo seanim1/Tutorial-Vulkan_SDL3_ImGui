@@ -13,7 +13,8 @@ $targets = @(
     "build\Part_03_minimal_triangle\Debug\",
     "build\Part_04_imgui\Debug\",
     "build\Part_05_vertex_buffer\Debug\",
-    "build\Part_06_index_buffer\Debug\"
+    "build\Part_06_index_buffer\Debug\",
+    "build\Part_07_uniform_buffer\Debug\"
 )
 
 foreach ($target in $targets) {
