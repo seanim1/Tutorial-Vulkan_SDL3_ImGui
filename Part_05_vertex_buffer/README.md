@@ -1,4 +1,3 @@
-# IMGUI integration
 
 ## Updated:
 main.cpp
