@@ -14,7 +14,9 @@ $targets = @(
     "build\Part_04_imgui\Debug\",
     "build\Part_05_vertex_buffer\Debug\",
     "build\Part_06_index_buffer\Debug\",
-    "build\Part_07_uniform_buffer\Debug\"
+    "build\Part_07_uniform_buffer\Debug\",
+    "build\Part_08_glm\Debug\",
+    "build\Part_09_tetrahedron\Debug\"
 )
 
 foreach ($target in $targets) {
