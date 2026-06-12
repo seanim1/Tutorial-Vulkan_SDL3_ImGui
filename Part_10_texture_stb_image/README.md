@@ -21,4 +21,4 @@ attr_descs — now 2 attributes (position + uv), vertexAttributeDescriptionCount
 cleanup_vulkan — texture cleanup added
 
 ## Motivating next step:
-Currently, changing VK_CULL_MODE_BACK_BIT to VK_CULL_MODE_BACK_BIT will see back faces bleeding through the front faces. Next step is depth bufferring 
+Currently, changing VK_CULL_MODE_BACK_BIT to VK_CULL_MODE_NONE will see back faces bleeding through the front faces. Next step is depth bufferring 
