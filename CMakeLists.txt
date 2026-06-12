@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(SDL3_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL3/build")
 find_package(SDL3 REQUIRED CONFIG)
 find_package(Vulkan REQUIRED)
+find_package(glm REQUIRED)
 
 add_library(sdl3_deps INTERFACE)
 target_link_libraries(sdl3_deps INTERFACE SDL3::SDL3)
@@ -17,7 +18,7 @@ target_link_libraries(vulkan_deps INTERFACE Vulkan::Vulkan)
 
 # Platform-specific Vulkan defines
 if(APPLE)
-    target_compile_definitions(vulkan_deps INTERFACE 
+    target_compile_definitions(vulkan_deps INTERFACE
         VK_USE_PLATFORM_METAL_EXT
         VK_ENABLE_BETA_EXTENSIONS
     )
@@ -43,6 +44,11 @@ target_include_directories(imgui PUBLIC
 target_link_libraries(imgui PUBLIC SDL3::SDL3 Vulkan::Vulkan)
 # -------------
 
+# --- glm ---
+add_library(glm_deps INTERFACE)
+target_link_libraries(glm_deps INTERFACE glm::glm)
+# -----------
+
 add_subdirectory(Part_00_init_SDL3)
 add_subdirectory(Part_01_window)
 add_subdirectory(Part_02_vk_instance)
@@ -51,3 +57,4 @@ add_subdirectory(Part_04_imgui)
 add_subdirectory(Part_05_vertex_buffer)
 add_subdirectory(Part_06_index_buffer)
 add_subdirectory(Part_07_uniform_buffer)
+add_subdirectory(Part_08_glm)

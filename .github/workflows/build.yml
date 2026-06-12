@@ -16,8 +16,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: setup
         run: bash setup_macos.sh
-      - name: install glslang
-        run: brew install glslang
       - name: verify SDL3
         run: ls -la third_party/SDL3/build
       - name: build
@@ -36,9 +34,11 @@ jobs:
           Start-Process -FilePath vulkan-sdk.exe -ArgumentList "--accept-licenses --default-answer --confirm-command install" -Wait
           echo "C:\VulkanSDK\$(Get-ChildItem C:\VulkanSDK | Select-Object -Last 1 -ExpandProperty Name)\Bin" >> $env:GITHUB_PATH
       - name: install vcpkg deps
-        run: vcpkg install sdl3:x64-windows vulkan:x64-windows
+        run: vcpkg install sdl3:x64-windows vulkan:x64-windows glm:x64-windows glslang:x64-windows
         env:
           VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+      - name: add glslang to PATH
+        run: echo "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\tools\glslang" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: configure
         run: |
           cmake -S . -B build `

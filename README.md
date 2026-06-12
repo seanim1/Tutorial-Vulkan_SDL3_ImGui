@@ -26,6 +26,7 @@ cmake --build build --target 04_imgui
 cmake --build build --target 05_vertex_buffer
 cmake --build build --target 06_index_buffer
 cmake --build build --target 07_uniform_buffer
+cmake --build build --target 08_glm
 
 ```
 
@@ -39,6 +40,7 @@ cmake --build build --target 07_uniform_buffer
 ./build/Part_05_vertex_buffer/05_vertex_buffer
 ./build/Part_06_index_buffer/06_index_buffer
 ./build/Part_07_uniform_buffer/07_uniform_buffer
+./build/Part_08_glm/08_glm
 
 ```
 ### Clean

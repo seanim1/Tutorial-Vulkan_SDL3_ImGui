@@ -4,7 +4,7 @@ if ! command -v brew &> /dev/null; then
     echo "Error: Homebrew not found"
     exit 1
 fi
-brew install cmake vulkan-headers vulkan-loader
+brew install cmake vulkan-headers vulkan-loader glslang glm
 if [ ! -d third_party/SDL3 ]; then
     mkdir -p third_party
     git clone --depth 1 https://github.com/libsdl-org/SDL.git third_party/SDL3
