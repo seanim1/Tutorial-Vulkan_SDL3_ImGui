@@ -28,6 +28,7 @@ cmake --build build --target 06_index_buffer
 cmake --build build --target 07_uniform_buffer
 cmake --build build --target 08_glm
 cmake --build build --target 09_tetrahedron
+cmake --build build --target 10_texture_stb_image
 
 ```
 
@@ -43,6 +44,7 @@ cmake --build build --target 09_tetrahedron
 ./build/Part_07_uniform_buffer/07_uniform_buffer
 ./build/Part_08_glm/08_glm
 ./build/Part_09_tetrahedron/09_tetrahedron
+./build/Part_10_texture_stb_image/10_texture_stb_image
 
 ```
 ### Clean

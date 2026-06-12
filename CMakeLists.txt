@@ -49,6 +49,11 @@ add_library(glm_deps INTERFACE)
 target_link_libraries(glm_deps INTERFACE glm::glm)
 # -----------
 
+# --- stb ---
+add_library(stb_deps INTERFACE)
+target_include_directories(stb_deps INTERFACE vendor)
+# -----------
+
 add_subdirectory(Part_00_init_SDL3)
 add_subdirectory(Part_01_window)
 add_subdirectory(Part_02_vk_instance)
@@ -59,3 +64,4 @@ add_subdirectory(Part_06_index_buffer)
 add_subdirectory(Part_07_uniform_buffer)
 add_subdirectory(Part_08_glm)
 add_subdirectory(Part_09_tetrahedron)
+add_subdirectory(Part_10_texture_stb_image)
