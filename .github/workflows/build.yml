@@ -34,7 +34,7 @@ jobs:
           Start-Process -FilePath vulkan-sdk.exe -ArgumentList "--accept-licenses --default-answer --confirm-command install" -Wait
           echo "C:\VulkanSDK\$(Get-ChildItem C:\VulkanSDK | Select-Object -Last 1 -ExpandProperty Name)\Bin" >> $env:GITHUB_PATH
       - name: install vcpkg deps
-        run: vcpkg install sdl3:x64-windows vulkan:x64-windows glm:x64-windows glslang:x64-windows
+        run: vcpkg install sdl3:x64-windows vulkan:x64-windows glm:x64-windows glslang:x64-windows assimp:x64-windows
         env:
           VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
       - name: add glslang to PATH

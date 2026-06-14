@@ -8,6 +8,7 @@ set(SDL3_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL3/build")
 find_package(SDL3 REQUIRED CONFIG)
 find_package(Vulkan REQUIRED)
 find_package(glm REQUIRED)
+find_package(assimp REQUIRED)
 
 add_library(sdl3_deps INTERFACE)
 target_link_libraries(sdl3_deps INTERFACE SDL3::SDL3)
@@ -54,6 +55,11 @@ add_library(stb_deps INTERFACE)
 target_include_directories(stb_deps INTERFACE vendor)
 # -----------
 
+# --- assimp ---
+add_library(assimp_deps INTERFACE)
+target_link_libraries(assimp_deps INTERFACE assimp::assimp)
+# --------------
+
 add_subdirectory(Part_00_init_SDL3)
 add_subdirectory(Part_01_window)
 add_subdirectory(Part_02_vk_instance)
@@ -68,3 +74,4 @@ add_subdirectory(Part_10_texture_stb_image)
 add_subdirectory(Part_11_depth_buffer)
 add_subdirectory(Part_12_overlay_quad)
 add_subdirectory(Part_13_blinn_phong)
+add_subdirectory(Part_14_assimp_mesh_loading)

@@ -10,7 +10,8 @@ sudo apt-get install -y \
     libwayland-dev wayland-protocols \
     vulkan-tools libvulkan-dev libvulkan1 \
     glslang-tools \
-    libglm-dev
+    libglm-dev \
+    libassimp-dev
 
 if [ ! -d third_party/SDL3 ]; then
     mkdir -p third_party
