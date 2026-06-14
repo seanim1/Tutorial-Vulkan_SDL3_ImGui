@@ -30,6 +30,8 @@ cmake --build build --target 08_glm
 cmake --build build --target 09_tetrahedron
 cmake --build build --target 10_texture_stb_image
 cmake --build build --target 11_depth_buffer
+cmake --build build --target 12_overlay_quad
+cmake --build build --target 13_blinn_phong
 
 ```
 
@@ -47,6 +49,8 @@ cmake --build build --target 11_depth_buffer
 ./build/Part_09_tetrahedron/09_tetrahedron
 ./build/Part_10_texture_stb_image/10_texture_stb_image
 ./build/Part_11_depth_buffer/11_depth_buffer
+./build/Part_12_overlay_quad/12_overlay_quad
+./build/Part_13_blinn_phong/13_blinn_phong
 
 ```
 ### Clean
