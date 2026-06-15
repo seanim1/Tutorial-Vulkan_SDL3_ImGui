@@ -1,4 +1,4 @@
-add_executable(15_XZRenderer_refactor main.cpp)
+add_executable(15_XZRenderer_refactor main.cpp XZRenderer.cpp)
 target_link_libraries(15_XZRenderer_refactor PRIVATE sdl3_deps vulkan_deps imgui glm_deps stb_deps assimp_deps)
 
 set(SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders/")
@@ -7,11 +7,13 @@ set(ASSET_OUTPUT_DIR  "${CMAKE_CURRENT_BINARY_DIR}/assets/")
 add_custom_target(15_copy_shaders ALL
     COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/shaders"
     COMMAND glslangValidator -V -S vert "${CMAKE_CURRENT_SOURCE_DIR}/shaders/shader.vert" -o "${CMAKE_CURRENT_BINARY_DIR}/shaders/vert.spv"
+    COMMAND glslangValidator -V -S vert "${CMAKE_CURRENT_SOURCE_DIR}/shaders/quad.vert" -o "${CMAKE_CURRENT_BINARY_DIR}/shaders/quad.spv"
     COMMAND glslangValidator -V -S frag "${CMAKE_CURRENT_SOURCE_DIR}/shaders/shader.frag" -o "${CMAKE_CURRENT_BINARY_DIR}/shaders/frag.spv"
     COMMAND glslangValidator -V -S frag "${CMAKE_CURRENT_SOURCE_DIR}/shaders/face.frag" -o "${CMAKE_CURRENT_BINARY_DIR}/shaders/face.spv"
     DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/shader.vert"
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/shader.frag"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/quad.vert"
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/face.frag"
     COMMENT "Compiling shaders"
 )

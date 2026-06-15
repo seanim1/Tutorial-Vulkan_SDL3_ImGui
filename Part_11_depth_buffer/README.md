@@ -2,7 +2,7 @@
 ## User Guide:
 Try moving sliders on the GUI
 
-changing VK_CULL_MODE_BACK_BIT to VK_CULL_MODE_BACK_BIT will no longer cause faces bleeding
+changing VK_CULL_MODE_BACK_BIT to VK_CULL_MODE_NONE will no longer cause faces bleeding
 
 ## Updated:
 main.cpp

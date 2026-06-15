@@ -1,8 +1,5 @@
 #include "XZRenderer.hpp"
 
-// All Vulkan / SDL / ImGui / Assimp / stb headers live here only.
-// None of them leak into XZRenderer.hpp.
-
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
@@ -167,10 +164,11 @@ struct RendererImpl {
     std::vector<VkCommandBuffer> scene_cmds;
     std::vector<VkCommandBuffer> imgui_cmds;
 
-    // Sync
-    VkSemaphore image_available_sem = VK_NULL_HANDLE;
-    VkSemaphore render_finished_sem = VK_NULL_HANDLE;
-    VkFence     in_flight_fence     = VK_NULL_HANDLE;
+    // Sync — one semaphore per swapchain image to avoid reuse conflicts
+    std::vector<VkSemaphore> image_available_sems;
+    std::vector<VkSemaphore> render_finished_sems;
+    VkFence                  in_flight_fence = VK_NULL_HANDLE;
+    uint32_t                 current_frame   = 0;
 
     // Main opaque pipeline (Blinn-Phong, shared by all MeshObjects)
     VkPipeline            main_pipeline        = VK_NULL_HANDLE;
@@ -181,8 +179,9 @@ struct RendererImpl {
     VkDescriptorPool imgui_pool = VK_NULL_HANDLE;
 
     // Runtime state
-    float     clear_color[4]  = {0,0,0,1};
+    float     clear_color[4]  = {0.306f, 0.643f, 0.761f, 1};
     glm::vec3 camera_pos      = {0,0,-6};
+    glm::vec3 camera_target   = {0,0,0};
     uint32_t  current_image   = 0;
     float     last_time       = 0;
 };
@@ -589,6 +588,45 @@ static void vulkan_init(RendererImpl* r, uint32_t W, uint32_t H,
             .subresourceRange={VK_IMAGE_ASPECT_DEPTH_BIT,0,1,0,1},
         };
         check_vk(vkCreateImageView(r->device,&vi,nullptr,&r->depth.view),"depth view");
+
+        // Transition depth image to DEPTH_STENCIL_ATTACHMENT_OPTIMAL once at init
+        VkCommandBufferAllocateInfo depth_cba = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = r->command_pool,
+            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1,
+        };
+        VkCommandBuffer depth_cmd;
+        vkAllocateCommandBuffers(r->device, &depth_cba, &depth_cmd);
+        VkCommandBufferBeginInfo depth_begin = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        };
+        vkBeginCommandBuffer(depth_cmd, &depth_begin);
+        VkImageMemoryBarrier depth_bar = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = 0,
+            .dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = r->depth.image,
+            .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
+        };
+        vkCmdPipelineBarrier(depth_cmd,
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &depth_bar);
+        vkEndCommandBuffer(depth_cmd);
+        VkSubmitInfo depth_si = {
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount = 1, .pCommandBuffers = &depth_cmd,
+        };
+        xz_log("vkQueueSubmit (depth layout transition)");
+        vkQueueSubmit(r->graphics_queue, 1, &depth_si, VK_NULL_HANDLE);
+        vkQueueWaitIdle(r->graphics_queue);
+        vkFreeCommandBuffers(r->device, r->command_pool, 1, &depth_cmd);
     }
 
     // Shared descriptor set layout: binding 0 = UBO, binding 1 = sampler
@@ -611,8 +649,12 @@ static void vulkan_init(RendererImpl* r, uint32_t W, uint32_t H,
     VkSemaphoreCreateInfo semi{.sType=VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     VkFenceCreateInfo     fi  {.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,.flags=VK_FENCE_CREATE_SIGNALED_BIT};
     xz_log("vkCreateSemaphore / Fence");
-    check_vk(vkCreateSemaphore(r->device,&semi,nullptr,&r->image_available_sem),"sem");
-    check_vk(vkCreateSemaphore(r->device,&semi,nullptr,&r->render_finished_sem),"sem");
+    r->image_available_sems.resize(r->image_count);
+    r->render_finished_sems.resize(r->image_count);
+    for (uint32_t i = 0; i < r->image_count; i++) {
+        check_vk(vkCreateSemaphore(r->device,&semi,nullptr,&r->image_available_sems[i]),"sem");
+        check_vk(vkCreateSemaphore(r->device,&semi,nullptr,&r->render_finished_sems[i]),"sem");
+    }
     check_vk(vkCreateFence(r->device,&fi,nullptr,&r->in_flight_fence),"fence");
 
     // Command buffers
@@ -765,7 +807,7 @@ static void build_quad_pipeline(RendererImpl* r, CustomShaderQuadImpl* m,
     };
     check_vk(vkCreatePipelineLayout(r->device,&pli,nullptr,&m->pipeline_layout),"quad pl");
 
-    VkShaderModule vm=load_shader(r->device, SHADER_OUTPUT_DIR "vert.spv");
+    VkShaderModule vm=load_shader(r->device, SHADER_OUTPUT_DIR "quad.spv");
     VkShaderModule fm=load_shader(r->device, frag_path.c_str());
 
     // QuadVertex: position (vec3) + uv (vec2), no normal
@@ -910,8 +952,8 @@ static void record_scene(RendererImpl* r,
                     vkCmdDrawIndexed(r->scene_cmds[i],sm.index_count,1,0,0,0);
                 }
             } else {
-                VkBuffer vb = obj->isFlatShading() ? m->flat_vertex.buffer : m->smooth_vertex.buffer;
-                VkBuffer ib = obj->isFlatShading() ? m->flat_index.buffer  : m->smooth_index.buffer;
+                VkBuffer vb = m->smooth_vertex.buffer;
+                VkBuffer ib = m->smooth_index.buffer;
                 if (vb==VK_NULL_HANDLE) continue;
                 vkCmdBindVertexBuffers(r->scene_cmds[i],0,1,&vb,offsets);
                 vkCmdBindIndexBuffer(r->scene_cmds[i],ib,0,VK_INDEX_TYPE_UINT32);
@@ -945,6 +987,62 @@ void PointLight::setPosition(const glm::vec3& p){position_=p;}
 // ============================================================
 //  MeshObject
 // ============================================================
+MeshObject::MeshObject(RendererImpl*                renderer_impl,
+                       const std::vector<Vertex>&   vertices,
+                       const std::vector<uint32_t>& indices,
+                       const std::string&           texture_path)
+{
+    impl_ = std::make_unique<MeshObjectImpl>();
+    impl_->renderer = renderer_impl;
+    loadFromVertices(vertices, indices, texture_path);
+}
+
+MeshObject::MeshObject(RendererImpl*      renderer_impl,
+                       const std::string& mesh_path,
+                       const std::string& texture_path)
+{
+    impl_ = std::make_unique<MeshObjectImpl>();
+    impl_->renderer = renderer_impl;
+    loadFromGLTF(mesh_path, texture_path);
+}
+
+MeshObject::~MeshObject()
+{
+    if (!impl_) return;
+    RendererImpl* renderer_impl = impl_->renderer;
+    if (!renderer_impl) return;
+
+    vkDeviceWaitIdle(renderer_impl->device);
+
+    // GPU geometry buffers
+    destroy_buffer(renderer_impl->device, impl_->smooth_vertex);
+    destroy_buffer(renderer_impl->device, impl_->smooth_index);
+    destroy_buffer(renderer_impl->device, impl_->flat_vertex);
+    destroy_buffer(renderer_impl->device, impl_->flat_index);
+
+    // GLTF sub-meshes
+    for (auto& sub_mesh : impl_->sub_meshes) {
+        destroy_buffer(renderer_impl->device, sub_mesh.vertex_buffer);
+        destroy_buffer(renderer_impl->device, sub_mesh.index_buffer);
+    }
+    impl_->sub_meshes.clear();
+
+    // Texture
+    destroy_texture(renderer_impl->device, impl_->texture);
+
+    // Per-frame uniform buffers
+    for (auto& frame : impl_->frames) {
+        destroy_buffer(renderer_impl->device, frame.buffer);
+    }
+    impl_->frames.clear();
+
+    // Descriptor pool
+    if (impl_->descriptor_pool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(renderer_impl->device, impl_->descriptor_pool, nullptr);
+        impl_->descriptor_pool = VK_NULL_HANDLE;
+    }
+}
+
 void MeshObject::setPosition(float x,float y,float z){position_={x,y,z};}
 void MeshObject::setPosition(const glm::vec3& p){position_=p;}
 void MeshObject::setRotation(float x,float y,float z){rotation_={x,y,z};}
@@ -952,7 +1050,6 @@ void MeshObject::setRotation(const glm::vec3& r){rotation_=r;}
 void MeshObject::setScale(float u){scale_={u,u,u};}
 void MeshObject::setScale(float x,float y,float z){scale_={x,y,z};}
 void MeshObject::setScale(const glm::vec3& s){scale_=s;}
-void MeshObject::enableFlatShading(bool f){flat_shading_=f;}
 
 void MeshObject::loadFromGLTF(const std::string& mesh_path,
                                const std::string& texture_path)
@@ -1013,42 +1110,32 @@ void MeshObject::loadFromVertices(const std::vector<Vertex>&   vertices,
                                    const std::vector<uint32_t>& indices,
                                    const std::string&           texture_path)
 {
-    auto* m = impl_.get();
-    RendererImpl* r = m->renderer;
-    if (!r){SDL_Log("XZR: call loadFromVertices after Renderer::init()");exit(1);}
+    MeshObjectImpl* mesh_impl     = impl_.get();
+    RendererImpl*   renderer_impl = mesh_impl->renderer;
+    if (!renderer_impl) { SDL_Log("XZR: call loadFromVertices after Renderer::init()"); exit(1); }
 
-    m->is_gltf        = false;
-    m->raw_index_count= (uint32_t)indices.size();
-    m->texture        = load_texture(r, texture_path);
+    mesh_impl->is_gltf         = false;
+    mesh_impl->raw_index_count = (uint32_t)indices.size();
+    mesh_impl->texture         = load_texture(renderer_impl, texture_path);
 
-    VkDeviceSize vsz=vertices.size()*sizeof(Vertex), isz=indices.size()*sizeof(uint32_t);
+    VkDeviceSize vertex_buffer_size = vertices.size() * sizeof(Vertex);
+    VkDeviceSize index_buffer_size  = indices.size()  * sizeof(uint32_t);
 
-    // Both flat and smooth share the same indices; caller provides normals per their choice.
-    // We store provided vertices in flat slot. Smooth slot mirrors it.
-    // If the caller wants both, they call loadFromVertices twice or toggle externally.
-    // For the tutorial use case, flat vertices are provided and stored in both slots.
-    m->flat_vertex=make_buffer(r->device,r->physical_device,vsz,
+    mesh_impl->smooth_vertex = make_buffer(
+        renderer_impl->device, renderer_impl->physical_device,
+        vertex_buffer_size,
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    upload(r->device,m->flat_vertex,vertices.data(),vsz);
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    upload(renderer_impl->device, mesh_impl->smooth_vertex, vertices.data(), vertex_buffer_size);
 
-    m->flat_index=make_buffer(r->device,r->physical_device,isz,
+    mesh_impl->smooth_index = make_buffer(
+        renderer_impl->device, renderer_impl->physical_device,
+        index_buffer_size,
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    upload(r->device,m->flat_index,indices.data(),isz);
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    upload(renderer_impl->device, mesh_impl->smooth_index, indices.data(), index_buffer_size);
 
-    // Mirror to smooth slots initially (user can call setSmoothVertices separately if needed)
-    m->smooth_vertex=make_buffer(r->device,r->physical_device,vsz,
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    upload(r->device,m->smooth_vertex,vertices.data(),vsz);
-
-    m->smooth_index=make_buffer(r->device,r->physical_device,isz,
-        VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    upload(r->device,m->smooth_index,indices.data(),isz);
-
-    alloc_mesh_frames(r, m);
+    alloc_mesh_frames(renderer_impl, mesh_impl);
 }
 
 // ============================================================
@@ -1086,6 +1173,7 @@ void CustomShaderQuad::setPosition(float x,float y,float z){position_={x,y,z};}
 void CustomShaderQuad::setPosition(const glm::vec3& p){position_=p;}
 void CustomShaderQuad::setRotation(float x,float y,float z){rotation_={x,y,z};}
 void CustomShaderQuad::setRotation(const glm::vec3& r){rotation_=r;}
+void CustomShaderQuad::setScale(float uniform_scale) { scale_ = {uniform_scale, uniform_scale, 1.0f}; }
 void CustomShaderQuad::setScale(float x,float y,float z){scale_={x,y,z};}
 void CustomShaderQuad::setScale(const glm::vec3& s){scale_=s;}
 
@@ -1096,111 +1184,129 @@ void ImGuiLayer::exposeClearColor(const std::string& label){
     if (renderer_impl_) ImGui::ColorEdit4(label.c_str(),renderer_impl_->clear_color);
 }
 void ImGuiLayer::exposeTransformation(MeshObject& o, const std::string& label){
-    ImGui::Text("%s",label.c_str());
-    glm::vec3 p=o.getPosition(),rt=o.getRotation(),s=o.getScale();
-    if(ImGui::SliderFloat3((label+" Pos").c_str(),&p.x,-10,10))  o.setPosition(p);
-    if(ImGui::SliderFloat3((label+" Rot").c_str(),&rt.x,-180,180))o.setRotation(rt);
-    if(ImGui::SliderFloat3((label+" Scl").c_str(),&s.x,0.01f,5)) o.setScale(s);
+    if (ImGui::CollapsingHeader(label.c_str())) {
+        glm::vec3 p=o.getPosition(),rt=o.getRotation(),s=o.getScale();
+        if(ImGui::SliderFloat3((label+" Pos").c_str(),&p.x,-10,10))   o.setPosition(p);
+        if(ImGui::SliderFloat3((label+" Rot").c_str(),&rt.x,-180,180)) o.setRotation(rt);
+        if(ImGui::SliderFloat3((label+" Scl").c_str(),&s.x,0.01f,5))  o.setScale(s);
+    }
 }
 void ImGuiLayer::exposeTransformation(CustomShaderQuad& q, const std::string& label){
-    ImGui::Text("%s",label.c_str());
-    glm::vec3 p=q.getPosition(),rt=q.getRotation(),s=q.getScale();
-    if(ImGui::SliderFloat3((label+" Pos").c_str(),&p.x,-10,10))  q.setPosition(p);
-    if(ImGui::SliderFloat3((label+" Rot").c_str(),&rt.x,-180,180))q.setRotation(rt);
-    if(ImGui::SliderFloat3((label+" Scl").c_str(),&s.x,0.01f,5)) q.setScale(s);
+    if (ImGui::CollapsingHeader(label.c_str())) {
+        glm::vec3 p=q.getPosition(),rt=q.getRotation(),s=q.getScale();
+        if(ImGui::SliderFloat3((label+" Pos").c_str(),&p.x,-10,10))   q.setPosition(p);
+        if(ImGui::SliderFloat3((label+" Rot").c_str(),&rt.x,-180,180)) q.setRotation(rt);
+        if(ImGui::SliderFloat3((label+" Scl").c_str(),&s.x,0.01f,5))  q.setScale(s);
+    }
 }
 void ImGuiLayer::exposeLight(PointLight& l, const std::string& label){
-    ImGui::Text("%s",label.c_str());
-    glm::vec3 p=l.getPosition();
-    if(ImGui::SliderFloat3((label+" Pos").c_str(),&p.x,-10,10)) l.setPosition(p);
+    if (ImGui::CollapsingHeader(label.c_str())) {
+        glm::vec3 p=l.getPosition();
+        if(ImGui::SliderFloat3((label+" Pos").c_str(),&p.x,-10,10)) l.setPosition(p);
+    }
 }
-void ImGuiLayer::exposeFlatShading(MeshObject& o, const std::string& label){
-    bool f=o.isFlatShading();
-    if(ImGui::Checkbox(label.c_str(),&f)) o.enableFlatShading(f);
+void ImGuiLayer::exposeCamera(const std::string& label) {
+    if (ImGui::CollapsingHeader(label.c_str())) {
+        glm::vec3 p = renderer_impl_->camera_pos;
+        glm::vec3 t = renderer_impl_->camera_target;
+        if (ImGui::SliderFloat3((label + " Pos").c_str(),    &p.x, -20.0f, 20.0f))
+            renderer_impl_->camera_pos = p;
+        if (ImGui::SliderFloat3((label + " Target").c_str(), &t.x, -20.0f, 20.0f))
+            renderer_impl_->camera_target = t;
+    }
 }
+void ImGuiLayer::beginWindow(const std::string& t) {
+    ImGui::Begin(t.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+}
+void ImGuiLayer::endWindow()  { ImGui::End(); }
+void ImGuiLayer::separator()  { ImGui::Separator(); }
 void ImGuiLayer::text(const std::string& s){ImGui::Text("%s",s.c_str());}
 void ImGuiLayer::showFPS(){ImGui::Text("%.1f FPS",ImGui::GetIO().Framerate);}
 
 // ============================================================
 //  Renderer
 // ============================================================
-Renderer::Renderer()
-    : impl_(std::make_unique<RendererImpl>())
-    , gui_(std::make_unique<ImGuiLayer>())
-{}
+Renderer::Renderer(uint32_t width, uint32_t height, const std::string& title)
+    : m_impl(std::make_unique<RendererImpl>())
+    , m_gui(std::make_unique<ImGuiLayer>())
+{
+    m_window_width  = width;
+    m_window_height = height;
+    m_window_title  = title;
+}
 
 Renderer::~Renderer(){
-    if (!impl_||impl_->device==VK_NULL_HANDLE) return;
-    vkDeviceWaitIdle(impl_->device);
+    if (!m_impl||m_impl->device==VK_NULL_HANDLE) return;
+    vkDeviceWaitIdle(m_impl->device);
 
     // Mesh objects
-    for (auto& obj:mesh_objects_){
+    for (auto& obj:m_mesh_objects){
         auto* m=obj->impl(); if (!m) continue;
-        for (auto& f:m->frames) destroy_buffer(impl_->device,f.buffer);
+        for (auto& f:m->frames) destroy_buffer(m_impl->device,f.buffer);
         if (m->descriptor_pool!=VK_NULL_HANDLE)
-            vkDestroyDescriptorPool(impl_->device,m->descriptor_pool,nullptr);
-        destroy_texture(impl_->device,m->texture);
-        destroy_buffer(impl_->device,m->flat_vertex);
-        destroy_buffer(impl_->device,m->flat_index);
-        destroy_buffer(impl_->device,m->smooth_vertex);
-        destroy_buffer(impl_->device,m->smooth_index);
+            vkDestroyDescriptorPool(m_impl->device,m->descriptor_pool,nullptr);
+        destroy_texture(m_impl->device,m->texture);
+        destroy_buffer(m_impl->device,m->flat_vertex);
+        destroy_buffer(m_impl->device,m->flat_index);
+        destroy_buffer(m_impl->device,m->smooth_vertex);
+        destroy_buffer(m_impl->device,m->smooth_index);
         for (auto& sm:m->sub_meshes){
-            destroy_buffer(impl_->device,sm.vertex_buffer);
-            destroy_buffer(impl_->device,sm.index_buffer);
+            destroy_buffer(m_impl->device,sm.vertex_buffer);
+            destroy_buffer(m_impl->device,sm.index_buffer);
         }
     }
 
     // Custom shader quads
-    for (auto& q:quads_){
+    for (auto& q:m_quads){
         auto* m=q->impl(); if (!m) continue;
-        for (auto& f:m->frames) destroy_buffer(impl_->device,f.buffer);
-        if (m->descriptor_pool!=VK_NULL_HANDLE) vkDestroyDescriptorPool(impl_->device,m->descriptor_pool,nullptr);
-        if (m->desc_layout    !=VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(impl_->device,m->desc_layout,nullptr);
-        if (m->pipeline       !=VK_NULL_HANDLE) vkDestroyPipeline(impl_->device,m->pipeline,nullptr);
-        if (m->pipeline_layout!=VK_NULL_HANDLE) vkDestroyPipelineLayout(impl_->device,m->pipeline_layout,nullptr);
-        destroy_buffer(impl_->device,m->vertex_buffer);
-        destroy_buffer(impl_->device,m->index_buffer);
+        for (auto& f:m->frames) destroy_buffer(m_impl->device,f.buffer);
+        if (m->descriptor_pool!=VK_NULL_HANDLE) vkDestroyDescriptorPool(m_impl->device,m->descriptor_pool,nullptr);
+        if (m->desc_layout    !=VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(m_impl->device,m->desc_layout,nullptr);
+        if (m->pipeline       !=VK_NULL_HANDLE) vkDestroyPipeline(m_impl->device,m->pipeline,nullptr);
+        if (m->pipeline_layout!=VK_NULL_HANDLE) vkDestroyPipelineLayout(m_impl->device,m->pipeline_layout,nullptr);
+        destroy_buffer(m_impl->device,m->vertex_buffer);
+        destroy_buffer(m_impl->device,m->index_buffer);
     }
 
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
-    if (impl_->imgui_pool!=VK_NULL_HANDLE) vkDestroyDescriptorPool(impl_->device,impl_->imgui_pool,nullptr);
+    if (m_impl->imgui_pool!=VK_NULL_HANDLE) vkDestroyDescriptorPool(m_impl->device,m_impl->imgui_pool,nullptr);
 
-    destroy_texture(impl_->device,impl_->depth);
-    if (impl_->main_desc_layout    !=VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(impl_->device,impl_->main_desc_layout,nullptr);
-    if (impl_->main_pipeline       !=VK_NULL_HANDLE) vkDestroyPipeline(impl_->device,impl_->main_pipeline,nullptr);
-    if (impl_->main_pipeline_layout!=VK_NULL_HANDLE) vkDestroyPipelineLayout(impl_->device,impl_->main_pipeline_layout,nullptr);
-    if (impl_->image_available_sem !=VK_NULL_HANDLE) vkDestroySemaphore(impl_->device,impl_->image_available_sem,nullptr);
-    if (impl_->render_finished_sem !=VK_NULL_HANDLE) vkDestroySemaphore(impl_->device,impl_->render_finished_sem,nullptr);
-    if (impl_->in_flight_fence     !=VK_NULL_HANDLE) vkDestroyFence(impl_->device,impl_->in_flight_fence,nullptr);
-    if (impl_->command_pool        !=VK_NULL_HANDLE) vkDestroyCommandPool(impl_->device,impl_->command_pool,nullptr);
-    for (auto& iv:impl_->image_views) vkDestroyImageView(impl_->device,iv,nullptr);
-    if (impl_->swapchain!=VK_NULL_HANDLE) vkDestroySwapchainKHR(impl_->device,impl_->swapchain,nullptr);
-    if (impl_->device   !=VK_NULL_HANDLE) vkDestroyDevice(impl_->device,nullptr);
-    if (impl_->surface  !=VK_NULL_HANDLE) vkDestroySurfaceKHR(impl_->instance,impl_->surface,nullptr);
-    if (impl_->instance !=VK_NULL_HANDLE) vkDestroyInstance(impl_->instance,nullptr);
-    if (impl_->window) {SDL_DestroyWindow(impl_->window); SDL_Quit();}
+    destroy_texture(m_impl->device,m_impl->depth);
+    if (m_impl->main_desc_layout    !=VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(m_impl->device,m_impl->main_desc_layout,nullptr);
+    if (m_impl->main_pipeline       !=VK_NULL_HANDLE) vkDestroyPipeline(m_impl->device,m_impl->main_pipeline,nullptr);
+    if (m_impl->main_pipeline_layout!=VK_NULL_HANDLE) vkDestroyPipelineLayout(m_impl->device,m_impl->main_pipeline_layout,nullptr);
+    for (auto& s : m_impl->image_available_sems) vkDestroySemaphore(m_impl->device,s,nullptr);
+    for (auto& s : m_impl->render_finished_sems) vkDestroySemaphore(m_impl->device,s,nullptr);
+    if (m_impl->in_flight_fence     !=VK_NULL_HANDLE) vkDestroyFence(m_impl->device,m_impl->in_flight_fence,nullptr);
+    if (m_impl->command_pool        !=VK_NULL_HANDLE) vkDestroyCommandPool(m_impl->device,m_impl->command_pool,nullptr);
+    for (auto& iv:m_impl->image_views) vkDestroyImageView(m_impl->device,iv,nullptr);
+    if (m_impl->swapchain!=VK_NULL_HANDLE) vkDestroySwapchainKHR(m_impl->device,m_impl->swapchain,nullptr);
+    if (m_impl->device   !=VK_NULL_HANDLE) vkDestroyDevice(m_impl->device,nullptr);
+    if (m_impl->surface  !=VK_NULL_HANDLE) vkDestroySurfaceKHR(m_impl->instance,m_impl->surface,nullptr);
+    if (m_impl->instance !=VK_NULL_HANDLE) vkDestroyInstance(m_impl->instance,nullptr);
+    if (m_impl->window) {SDL_DestroyWindow(m_impl->window); SDL_Quit();}
 }
 
-void Renderer::setWindowSize(uint32_t w,uint32_t h){window_width_=w;window_height_=h;}
-void Renderer::setWindowTitle(const std::string& t){window_title_=t;}
 void Renderer::setClearColor(float r,float g,float b,float a){
-    clear_color_[0]=r;clear_color_[1]=g;clear_color_[2]=b;clear_color_[3]=a;
-    if(impl_){impl_->clear_color[0]=r;impl_->clear_color[1]=g;
-              impl_->clear_color[2]=b;impl_->clear_color[3]=a;}
+    m_impl->clear_color[0]=r;
+    m_impl->clear_color[1]=g;
+    m_impl->clear_color[2]=b;
+    m_impl->clear_color[3]=a;
 }
 void Renderer::setCameraPosition(float x,float y,float z){
-    camera_pos_={x,y,z}; if(impl_) impl_->camera_pos=camera_pos_;
+    m_impl->camera_pos={x,y,z};
 }
-void Renderer::enableLogging(bool e){logging_enabled_=e; g_log=e;}
+void Renderer::setCameraTarget(float x, float y, float z) {
+    m_impl->camera_target = {x,y,z};;
+}
+void Renderer::enableLogging(bool e){m_logging_enabled=e; g_log=e;}
 
 void Renderer::init(){
-    g_log=logging_enabled_;
-    for(int i=0;i<4;i++) impl_->clear_color[i]=clear_color_[i];
-    impl_->camera_pos=camera_pos_;
+    g_log=m_logging_enabled;
 
-    vulkan_init(impl_.get(),window_width_,window_height_,window_title_,clear_color_);
+    vulkan_init(m_impl.get(),m_window_width, m_window_height, m_window_title, m_impl->clear_color);
 
     // ImGui
     VkDescriptorPoolSize ps[]={
@@ -1213,84 +1319,114 @@ void Renderer::init(){
         .maxSets=IMGUI_IMPL_VULKAN_MINIMUM_SAMPLED_IMAGE_POOL_SIZE+IMGUI_IMPL_VULKAN_MINIMUM_SAMPLER_POOL_SIZE,
         .poolSizeCount=2,.pPoolSizes=ps,
     };
-    check_vk(vkCreateDescriptorPool(impl_->device,&dp,nullptr,&impl_->imgui_pool),"imgui pool");
+    check_vk(vkCreateDescriptorPool(m_impl->device,&dp,nullptr,&m_impl->imgui_pool),"imgui pool");
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
-    ImGui_ImplSDL3_InitForVulkan(impl_->window);
+    ImGui_ImplSDL3_InitForVulkan(m_impl->window);
 
     ImGui_ImplVulkan_InitInfo iv{};
     iv.ApiVersion=VK_API_VERSION_1_3;
-    iv.Instance=impl_->instance; iv.PhysicalDevice=impl_->physical_device;
-    iv.Device=impl_->device; iv.QueueFamily=impl_->graphics_family;
-    iv.Queue=impl_->graphics_queue; iv.DescriptorPool=impl_->imgui_pool;
-    iv.MinImageCount=impl_->image_count; iv.ImageCount=impl_->image_count;
+    iv.Instance=m_impl->instance; iv.PhysicalDevice=m_impl->physical_device;
+    iv.Device=m_impl->device; iv.QueueFamily=m_impl->graphics_family;
+    iv.Queue=m_impl->graphics_queue; iv.DescriptorPool=m_impl->imgui_pool;
+    iv.MinImageCount=m_impl->image_count; iv.ImageCount=m_impl->image_count;
     iv.UseDynamicRendering=true;
     iv.PipelineInfoMain.MSAASamples=VK_SAMPLE_COUNT_1_BIT;
     iv.PipelineInfoMain.PipelineRenderingCreateInfo={
         .sType=VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-        .colorAttachmentCount=1,.pColorAttachmentFormats=&impl_->surface_format.format,
+        .colorAttachmentCount=1,.pColorAttachmentFormats=&m_impl->surface_format.format,
     };
     ImGui_ImplVulkan_Init(&iv);
 
-    gui_->renderer_impl_=impl_.get();
+    m_gui->renderer_impl_=m_impl.get();
 }
 
-MeshObject& Renderer::createMeshObject(){
-    auto obj=std::unique_ptr<MeshObject>(new MeshObject());
-    obj->impl_=std::make_unique<MeshObjectImpl>();
-    obj->impl_->renderer=impl_.get();  // inject back-pointer
-    MeshObject& ref=*obj;
-    mesh_objects_.push_back(std::move(obj));
-    return ref;
+MeshObject& Renderer::createMeshObject(const std::vector<Vertex>&   vertices,
+                                        const std::vector<uint32_t>& indices,
+                                        const std::string&           texture_path)
+{
+    std::unique_ptr<MeshObject> mesh_object = std::make_unique<MeshObject>(
+        m_impl.get(), vertices, indices, texture_path);
+    MeshObject& mesh_object_ref = *mesh_object;
+    m_mesh_objects.push_back(std::move(mesh_object));
+    return mesh_object_ref;
 }
 
-CustomShaderQuad& Renderer::createCustomShaderQuad(const std::string& frag_spv){
-    auto q=std::unique_ptr<CustomShaderQuad>(new CustomShaderQuad(frag_spv));
-    q->impl_=std::make_unique<CustomShaderQuadImpl>();
-    q->impl_->renderer=impl_.get();
-    build_quad_pipeline(impl_.get(), q->impl_.get(), frag_spv);
-    CustomShaderQuad& ref=*q;
-    quads_.push_back(std::move(q));
-    return ref;
+MeshObject& Renderer::createMeshObject(const std::string& mesh_path,
+                                        const std::string& texture_path)
+{
+    std::unique_ptr<MeshObject> mesh_object = std::make_unique<MeshObject>(
+        m_impl.get(), mesh_path, texture_path);
+    MeshObject& mesh_object_ref = *mesh_object;
+    m_mesh_objects.push_back(std::move(mesh_object));
+    return mesh_object_ref;
+}
+CustomShaderQuad& Renderer::createCustomShaderQuad(const std::string& frag_spv_path)
+{
+    // Generic unit quad
+    const std::vector<glm::vec3> positions = {
+    {-0.5f, -0.5f, 0.0f},  // bottom-left
+    { 0.5f, -0.5f, 0.0f},  // bottom-right
+    { 0.5f,  0.5f, 0.0f},  // top-right
+    {-0.5f,  0.5f, 0.0f},  // top-left
+    };
+    const std::vector<glm::vec2> uvs = {
+        {0,0},{1,0},{1,1},{0,1}
+    };
+    const std::vector<uint32_t> indices = {0,1,2, 0,2,3};
+
+    std::unique_ptr<CustomShaderQuad> custom_shader_quad = std::make_unique<CustomShaderQuad>(frag_spv_path);
+    custom_shader_quad->impl_ = std::make_unique<CustomShaderQuadImpl>();
+    custom_shader_quad->impl_->renderer = m_impl.get();
+    build_quad_pipeline(m_impl.get(), custom_shader_quad->impl_.get(), frag_spv_path);
+    custom_shader_quad->setVertices(positions, uvs, indices);
+    CustomShaderQuad& custom_shader_quad_ref = *custom_shader_quad;
+    m_quads.push_back(std::move(custom_shader_quad));
+    return custom_shader_quad_ref;
 }
 
 PointLight& Renderer::createPointLight(){
-    lights_.push_back(std::make_unique<PointLight>());
-    return *lights_.back();
+    m_lights.push_back(std::make_unique<PointLight>());
+    return *m_lights.back();
 }
 
-ImGuiLayer& Renderer::getGui(){ return *gui_; }
+ImGuiLayer& Renderer::getGui(){ return *m_gui; }
+
+bool Renderer::handleEvent(void* sdl_event) {
+    SDL_Event* e = static_cast<SDL_Event*>(sdl_event);
+    ImGui_ImplSDL3_ProcessEvent(e);
+    if (e->type == SDL_EVENT_QUIT) {
+        m_impl->should_close = true;
+        return true;
+    }
+    return false;
+}
 
 bool Renderer::beginFrame(){
-    SDL_Event ev;
-    while(SDL_PollEvent(&ev)){
-        ImGui_ImplSDL3_ProcessEvent(&ev);
-        if(ev.type==SDL_EVENT_QUIT) impl_->should_close=true;
-    }
-    if(impl_->should_close) return false;
+    if(m_impl->should_close) return false;
 
-    vkWaitForFences(impl_->device,1,&impl_->in_flight_fence,VK_TRUE,UINT64_MAX);
-    vkResetFences(impl_->device,1,&impl_->in_flight_fence);
-    check_vk(vkAcquireNextImageKHR(impl_->device,impl_->swapchain,UINT64_MAX,
-        impl_->image_available_sem,VK_NULL_HANDLE,&impl_->current_image),"acquire");
+    vkWaitForFences(m_impl->device,1,&m_impl->in_flight_fence,VK_TRUE,UINT64_MAX);
+    vkResetFences(m_impl->device,1,&m_impl->in_flight_fence);
+    check_vk(vkAcquireNextImageKHR(m_impl->device,m_impl->swapchain,UINT64_MAX,
+        m_impl->image_available_sems[m_impl->current_frame],VK_NULL_HANDLE,&m_impl->current_image),"acquire");
 
-    uint32_t idx=impl_->current_image;
+    uint32_t idx=m_impl->current_image;
 
     // Build view + proj
-    glm::mat4 view=glm::lookAt(impl_->camera_pos,glm::vec3(0),glm::vec3(0,1,0));
+    glm::mat4 view=glm::lookAt(m_impl->camera_pos,m_impl->camera_target,glm::vec3(0,1,0));
     glm::mat4 proj=glm::perspective(glm::radians(45.0f),
-        (float)impl_->swapchain_extent.width/(float)impl_->swapchain_extent.height,
+        (float)m_impl->swapchain_extent.width/(float)m_impl->swapchain_extent.height,
         0.1f,100.0f);
     proj[1][1]*=-1;
 
     glm::vec4 lp={2,2,-2,1};
-    if (!lights_.empty()) lp=glm::vec4(lights_[0]->getPosition(),1.0f);
-    glm::vec4 cp=glm::vec4(impl_->camera_pos,1.0f);
+    if (!m_lights.empty()) lp=glm::vec4(m_lights[0]->getPosition(),1.0f);
+    glm::vec4 cp=glm::vec4(m_impl->camera_pos,1.0f);
 
     // Update mesh UBOs
-    for (auto& obj:mesh_objects_){
+    for (auto& obj:m_mesh_objects){
         auto* m=obj->impl(); if(!m||m->frames.empty()) continue;
         glm::mat4 mdl=compute_model(obj->getPosition(),obj->getRotation(),obj->getScale());
         UniformData u{}; u.mvp=proj*view*mdl; u.model=mdl; u.light_pos=lp; u.cam_pos=cp;
@@ -1298,7 +1434,7 @@ bool Renderer::beginFrame(){
     }
 
     // Update quad UBOs
-    for (auto& q:quads_){
+    for (auto& q:m_quads){
         auto* m=q->impl(); if(!m||m->frames.empty()) continue;
         glm::mat4 mdl=compute_model(q->getPosition(),q->getRotation(),q->getScale());
         UniformData u{}; u.mvp=proj*view*mdl; u.model=mdl; u.light_pos=lp; u.cam_pos=cp;
@@ -1306,9 +1442,9 @@ bool Renderer::beginFrame(){
     }
 
     // Re-record scene command buffers (handles flat/smooth + clear color changes)
-    std::vector<MeshObject*> mptrs; for(auto& o:mesh_objects_) mptrs.push_back(o.get());
-    std::vector<CustomShaderQuad*> qptrs; for(auto& q:quads_) qptrs.push_back(q.get());
-    record_scene(impl_.get(),mptrs,qptrs);
+    std::vector<MeshObject*> mptrs; for(auto& o:m_mesh_objects) mptrs.push_back(o.get());
+    std::vector<CustomShaderQuad*> qptrs; for(auto& q:m_quads) qptrs.push_back(q.get());
+    record_scene(m_impl.get(),mptrs,qptrs);
 
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplSDL3_NewFrame();
@@ -1318,55 +1454,57 @@ bool Renderer::beginFrame(){
 
 void Renderer::endFrame(){
     ImGui::Render();
-    uint32_t idx=impl_->current_image;
+    uint32_t idx=m_impl->current_image;
 
     // ImGui command buffer
     VkCommandBufferBeginInfo bi{
         .sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags=VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT,
     };
-    check_vk(vkBeginCommandBuffer(impl_->imgui_cmds[idx],&bi),"imgui begin");
+    check_vk(vkBeginCommandBuffer(m_impl->imgui_cmds[idx],&bi),"imgui begin");
     VkRenderingAttachmentInfo ca{
-        .sType=VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,.imageView=impl_->image_views[idx],
+        .sType=VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,.imageView=m_impl->image_views[idx],
         .imageLayout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         .loadOp=VK_ATTACHMENT_LOAD_OP_LOAD,.storeOp=VK_ATTACHMENT_STORE_OP_STORE,
     };
     VkRenderingInfo ri{
         .sType=VK_STRUCTURE_TYPE_RENDERING_INFO,
-        .renderArea={{0,0},impl_->swapchain_extent},
+        .renderArea={{0,0},m_impl->swapchain_extent},
         .layerCount=1,.colorAttachmentCount=1,.pColorAttachments=&ca,
     };
-    vkCmdBeginRendering(impl_->imgui_cmds[idx],&ri);
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(),impl_->imgui_cmds[idx]);
-    vkCmdEndRendering(impl_->imgui_cmds[idx]);
+    vkCmdBeginRendering(m_impl->imgui_cmds[idx],&ri);
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(),m_impl->imgui_cmds[idx]);
+    vkCmdEndRendering(m_impl->imgui_cmds[idx]);
     VkImageMemoryBarrier bar{
         .sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
         .srcAccessMask=VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,.dstAccessMask=0,
         .oldLayout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,.newLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
         .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
-        .image=impl_->images[idx],.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1},
+        .image=m_impl->images[idx],.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1},
     };
-    vkCmdPipelineBarrier(impl_->imgui_cmds[idx],
+    vkCmdPipelineBarrier(m_impl->imgui_cmds[idx],
         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
         0,0,nullptr,0,nullptr,1,&bar);
-    check_vk(vkEndCommandBuffer(impl_->imgui_cmds[idx]),"imgui end");
+    check_vk(vkEndCommandBuffer(m_impl->imgui_cmds[idx]),"imgui end");
 
-    VkCommandBuffer cmds[]={impl_->scene_cmds[idx],impl_->imgui_cmds[idx]};
+    VkCommandBuffer cmds[]={m_impl->scene_cmds[idx],m_impl->imgui_cmds[idx]};
     VkPipelineStageFlags wst=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo si{
         .sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .waitSemaphoreCount=1,.pWaitSemaphores=&impl_->image_available_sem,
+        .waitSemaphoreCount=1,.pWaitSemaphores=&m_impl->image_available_sems[m_impl->current_frame],
         .pWaitDstStageMask=&wst,.commandBufferCount=2,.pCommandBuffers=cmds,
-        .signalSemaphoreCount=1,.pSignalSemaphores=&impl_->render_finished_sem,
+        .signalSemaphoreCount=1,.pSignalSemaphores=&m_impl->render_finished_sems[m_impl->current_frame],
     };
-    check_vk(vkQueueSubmit(impl_->graphics_queue,1,&si,impl_->in_flight_fence),"submit");
+    check_vk(vkQueueSubmit(m_impl->graphics_queue,1,&si,m_impl->in_flight_fence),"submit");
 
     VkPresentInfoKHR pi{
         .sType=VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-        .waitSemaphoreCount=1,.pWaitSemaphores=&impl_->render_finished_sem,
-        .swapchainCount=1,.pSwapchains=&impl_->swapchain,.pImageIndices=&impl_->current_image,
+        .waitSemaphoreCount=1,.pWaitSemaphores=&m_impl->render_finished_sems[m_impl->current_frame],
+        .swapchainCount=1,.pSwapchains=&m_impl->swapchain,.pImageIndices=&m_impl->current_image,
     };
-    vkQueuePresentKHR(impl_->graphics_queue,&pi);
+    vkQueuePresentKHR(m_impl->graphics_queue,&pi);
+
+    m_impl->current_frame = (m_impl->current_frame + 1) % m_impl->image_count;
 }
 
 } // namespace XZRenderer

@@ -35,7 +35,7 @@ static const glm::vec3 quad_positions[] = {
     { 0.5130f,  0.7788f,  1.0371f},
     {-0.6416f,  0.7788f, -0.9629f},
 };
-static const glm::vec2 quad_uvs[] = {{0,0},{1,0},{1,1},{0,1}};
+static const glm::vec2 quad_uvs[]     = {{0,0},{1,0},{1,1},{0,1}};
 static const uint32_t  quad_indices[] = {0,1,2, 0,2,3};
 
 // ============================================================
@@ -48,40 +48,29 @@ struct App {
     XZRenderer::MeshObject*       sword = nullptr;
     XZRenderer::CustomShaderQuad* face  = nullptr;
     XZRenderer::PointLight*       light = nullptr;
-};
 
-static App* g_app = nullptr;
+    App() : renderer(800, 600, "XZRenderer") {}
+};
 
 // ============================================================
 //  SDL3 app callbacks
 // ============================================================
 SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[])
 {
-    auto* app = new App();
+    App* app = new App();
     *appstate  = app;
-    g_app      = app;
 
-    // --- Configure renderer ---
-    app->renderer.setWindowSize(800, 600);
-    app->renderer.setWindowTitle("Part 15 - XZRenderer");
-    app->renderer.setClearColor(0.306f, 0.643f, 0.761f);
-    app->renderer.setCameraPosition(0.0f, 0.0f, -6.0f);
-    app->renderer.enableLogging(false);
     app->renderer.init();
 
     // --- Tetrahedron ---
-    app->tetra = &app->renderer.createMeshObject();
-    app->tetra->loadFromVertices(
+    app->tetra = &app->renderer.createMeshObject(
         std::vector<XZRenderer::Vertex>(flat_vertices, flat_vertices + 12),
         std::vector<uint32_t>(flat_indices, flat_indices + 12),
         ASSET_OUTPUT_DIR "uv_checker.png"
     );
     app->tetra->setPosition(-2.0f, 0.0f, 0.0f);
-    app->tetra->enableFlatShading(true);
 
-    // --- Sword ---
-    app->sword = &app->renderer.createMeshObject();
-    app->sword->loadFromGLTF(
+    app->sword = &app->renderer.createMeshObject(
         ASSET_OUTPUT_DIR "sword_0.glb",
         ASSET_OUTPUT_DIR "sword_0.jpg"
     );
@@ -91,13 +80,9 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[])
 
     // --- Face overlay quad ---
     app->face = &app->renderer.createCustomShaderQuad(SHADER_OUTPUT_DIR "face.spv");
-    app->face->setVertices(
-        std::vector<glm::vec3>(quad_positions, quad_positions + 4),
-        std::vector<glm::vec2>(quad_uvs,       quad_uvs       + 4),
-        std::vector<uint32_t>(quad_indices,     quad_indices   + 6)
-    );
-    // Face quad shares the tetrahedron's transform — same position/rotation
-    app->face->setPosition(-2.0f, 0.0f, 0.0f);
+    app->face->setPosition(-0.4f, 0.4f, -1.0f);
+    app->face->setRotation(0.0f, 0.0f, 180.0f);
+    app->face->setScale(3.0f);
 
     // --- Light ---
     app->light = &app->renderer.createPointLight();
@@ -108,8 +93,8 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[])
 
 SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event)
 {
-    // Events are handled internally by Renderer::beginFrame()
-    (void)appstate; (void)event;
+    auto* app = static_cast<App*>(appstate);
+    if (app->renderer.handleEvent(event)) return SDL_APP_SUCCESS;
     return SDL_APP_CONTINUE;
 }
 
@@ -120,25 +105,27 @@ SDL_AppResult SDL_AppIterate(void* appstate)
 
     if (!r.beginFrame()) return SDL_APP_SUCCESS;
 
-    // --- ImGui ---
     auto& gui = r.getGui();
-    ImGui::Begin("Scene", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+    gui.beginWindow("Scene");
     gui.text("Press T to toggle GUI");
-    ImGui::Separator();
+    gui.exposeCamera("Camera");
+    gui.separator();
 
     gui.exposeTransformation(*app->tetra, "Tetrahedron");
-    gui.exposeFlatShading(*app->tetra, "Flat Shading (tetra)");
-    ImGui::Separator();
+    gui.separator();
+
+    gui.exposeTransformation(*app->face, "Face");
+    gui.separator();
 
     gui.exposeTransformation(*app->sword, "Sword");
-    ImGui::Separator();
+    gui.separator();
 
     gui.exposeLight(*app->light, "Light");
-    ImGui::Separator();
+    gui.separator();
 
     gui.exposeClearColor("Background");
     gui.showFPS();
-    ImGui::End();
+    gui.endWindow();
 
     r.endFrame();
     return SDL_APP_CONTINUE;
@@ -148,5 +135,4 @@ void SDL_AppQuit(void* appstate, SDL_AppResult result)
 {
     auto* app = static_cast<App*>(appstate);
     delete app;
-    g_app = nullptr;
 }

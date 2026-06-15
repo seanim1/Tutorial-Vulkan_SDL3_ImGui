@@ -44,21 +44,20 @@ private:
 
 // ---------------------------------------------------------------
 //  MeshObject  —  a textured 3-D object with Blinn-Phong lighting.
-//
-//  Two construction paths:
-//    obj.loadFromGLTF("mesh.glb", "texture.jpg")
-//    obj.loadFromVertices(verts, indices, "texture.png")
 // ---------------------------------------------------------------
 class MeshObject {
 public:
-    // --- Loading ---
-    void loadFromGLTF(const std::string& mesh_path,
-                      const std::string& texture_path);
+    MeshObject(RendererImpl*                renderer_impl,
+               const std::vector<Vertex>&   vertices,
+               const std::vector<uint32_t>& indices,
+               const std::string&           texture_path);
 
-    void loadFromVertices(const std::vector<Vertex>&   vertices,
-                          const std::vector<uint32_t>& indices,
-                          const std::string&           texture_path);
+    MeshObject(RendererImpl*      renderer_impl,
+               const std::string& mesh_path,
+               const std::string& texture_path);
 
+    ~MeshObject();
+    
     // --- Transform ---
     void setPosition(float x, float y, float z);
     void setPosition(const glm::vec3& pos);
@@ -70,12 +69,6 @@ public:
     void setScale(float x, float y, float z);
     void setScale(const glm::vec3& scale);
 
-    // --- Shading ---
-    // Only meaningful when loaded from raw vertices with pre-computed flat normals.
-    // For glTF objects normals come from Assimp; this flag is ignored.
-    void enableFlatShading(bool flat);
-    bool isFlatShading() const { return flat_shading_; }
-
     // --- Accessors (read-only) ---
     const glm::vec3& getPosition() const { return position_; }
     const glm::vec3& getRotation() const { return rotation_; }
@@ -86,13 +79,18 @@ public:
 
 private:
     friend class Renderer;
-    MeshObject() = default;
+    // --- Initialize ---
+    void loadFromGLTF(const std::string& mesh_path,
+                      const std::string& texture_path);
+
+    void loadFromVertices(const std::vector<Vertex>&   vertices,
+                          const std::vector<uint32_t>& indices,
+                          const std::string&           texture_path);
 
     glm::vec3 position_     = {0.0f, 0.0f, 0.0f};
     glm::vec3 rotation_     = {0.0f, 0.0f, 0.0f};  // degrees
     glm::vec3 scale_        = {1.0f, 1.0f, 1.0f};
-    bool      flat_shading_ = false;
-
+        
     std::unique_ptr<MeshObjectImpl> impl_;
 };
 
@@ -108,6 +106,7 @@ private:
 // ---------------------------------------------------------------
 class CustomShaderQuad {
 public:
+    explicit CustomShaderQuad(const std::string& frag_spv_path);
     // Supply baked quad geometry.
     // positions and uvs must have the same length.
     void setVertices(const std::vector<glm::vec3>& positions,
@@ -121,6 +120,7 @@ public:
     void setRotation(float x, float y, float z);
     void setRotation(const glm::vec3& degrees);
 
+    void setScale(float uniform_scale);
     void setScale(float x, float y, float z);
     void setScale(const glm::vec3& scale);
 
@@ -134,7 +134,6 @@ public:
 
 private:
     friend class Renderer;
-    explicit CustomShaderQuad(const std::string& frag_spv_path);
 
     std::string frag_spv_path_;
     glm::vec3   position_ = {0.0f, 0.0f, 0.0f};
@@ -161,8 +160,14 @@ public:
     // Position-only sliders (scale/rotation irrelevant for lights)
     void exposeLight(PointLight& light, const std::string& label);
 
+    void exposeCamera(const std::string& label);
     // Checkbox for flat / smooth shading toggle
     void exposeFlatShading(MeshObject& obj, const std::string& label);
+
+    // Window management
+    void beginWindow(const std::string& title);
+    void endWindow();
+    void separator();
 
     // Utility
     void text(const std::string& str);
@@ -170,10 +175,6 @@ public:
 
     // Internal
     RendererImpl* renderer_impl_ = nullptr;
-
-private:
-    friend class Renderer;
-    ImGuiLayer() = default;
 };
 
 // ---------------------------------------------------------------
@@ -182,7 +183,8 @@ private:
 // ---------------------------------------------------------------
 class Renderer {
 public:
-    Renderer();
+    // Width, height, and title are required at construction time
+    explicit Renderer(uint32_t width, uint32_t height, const std::string& title);
     ~Renderer();
 
     // Non-copyable, non-movable
@@ -192,44 +194,49 @@ public:
     Renderer& operator=(Renderer&&)      = delete;
 
     // ---- Configuration  (call BEFORE init()) ----
-    void setWindowSize(uint32_t width, uint32_t height);
-    void setWindowTitle(const std::string& title);
     void setClearColor(float r, float g, float b, float a = 1.0f);
     void setCameraPosition(float x, float y, float z);
-
-    // Enable / disable internal engine logging (off by default)
+    void setCameraTarget(float x, float y, float z);
     void enableLogging(bool enable);
 
     // ---- Initialisation  (call ONCE) ----
     void init();
 
     // ---- Scene objects  (call AFTER init()) ----
-    // The Renderer owns every object.  Returns a stable reference.
-    MeshObject&       createMeshObject();
+    MeshObject& createMeshObject(const std::vector<Vertex>&   vertices,
+                              const std::vector<uint32_t>& indices,
+                              const std::string&           texture_path);
+
+    MeshObject& createMeshObject(const std::string& mesh_path,
+                                const std::string& texture_path);
+
     CustomShaderQuad& createCustomShaderQuad(const std::string& frag_spv_path);
+
     PointLight&       createPointLight();
 
     // ---- ImGui ----
     ImGuiLayer& getGui();
 
+    // ---- Event handling ----
+    bool handleEvent(void* sdl_event);
+
     // ---- Frame loop ----
-    // Returns false when the user closes the window.
-    bool beginFrame();   // poll events, acquire image, update UBOs, begin ImGui frame
-    void endFrame();     // render ImGui, submit, present
+    bool beginFrame();
+    void endFrame();
 
 private:
-    std::unique_ptr<RendererImpl>                  impl_;
-    std::vector<std::unique_ptr<MeshObject>>       mesh_objects_;
-    std::vector<std::unique_ptr<CustomShaderQuad>> quads_;
-    std::vector<std::unique_ptr<PointLight>>       lights_;
-    std::unique_ptr<ImGuiLayer>                    gui_;
+    MeshObject&       createMeshObject();
+    std::unique_ptr<RendererImpl>                  m_impl;
+    std::vector<std::unique_ptr<MeshObject>>       m_mesh_objects;
+    std::vector<std::unique_ptr<CustomShaderQuad>> m_quads;
+    std::vector<std::unique_ptr<PointLight>>       m_lights;
+    std::unique_ptr<ImGuiLayer>                    m_gui;
 
-    uint32_t    window_width_   = 800;
-    uint32_t    window_height_  = 600;
-    std::string window_title_   = "XZRenderer";
-    float       clear_color_[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-    bool        logging_enabled_ = false;
-    glm::vec3   camera_pos_     = {0.0f, 0.0f, -6.0f};
+    uint32_t    m_window_width   = 800;
+    uint32_t    m_window_height  = 600;
+    std::string m_window_title   = "XZRenderer";
+    bool        m_logging_enabled = false;
+
 };
 
 } // namespace XZRenderer
