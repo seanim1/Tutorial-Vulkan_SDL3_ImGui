@@ -1308,7 +1308,6 @@ void Renderer::init(){
 
     vulkan_init(m_impl.get(),m_window_width, m_window_height, m_window_title, m_impl->clear_color);
 
-    // ImGui
     VkDescriptorPoolSize ps[]={
         {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,IMGUI_IMPL_VULKAN_MINIMUM_SAMPLED_IMAGE_POOL_SIZE},
         {VK_DESCRIPTOR_TYPE_SAMPLER,      IMGUI_IMPL_VULKAN_MINIMUM_SAMPLER_POOL_SIZE},

@@ -300,6 +300,7 @@
     <li><a href="#vertex">Vertex</a></li>
 
     <li class="section-label">Concepts</li>
+    <li><a href="#features">Feature Support</a></li>
     <li><a href="#shaders">Shaders</a></li>
     <li><a href="#assets">Assets</a></li>
   </ul>
@@ -346,6 +347,17 @@
     <span class="fn">App</span>() : <span class="fn">renderer</span>(<span class="nu">800</span>, <span class="nu">600</span>, <span class="st">"My App"</span>) {}
 };
 
+<span class="kw">static void</span> <span class="fn">update_gui</span>(<span class="ns">XZRenderer</span>::<span class="ty">ImGuiLayer</span><span class="op">&amp;</span> gui, <span class="ty">App</span><span class="op">&amp;</span> app)
+{
+    gui.<span class="fn">beginWindow</span>(<span class="st">"Controls"</span>);
+    gui.<span class="fn">exposeTransformation</span>(*app.sword, <span class="st">"Sword"</span>);
+    gui.<span class="fn">exposeLight</span>(*app.light, <span class="st">"Light"</span>);
+    gui.<span class="fn">exposeCamera</span>(<span class="st">"Camera"</span>);
+    gui.<span class="fn">exposeClearColor</span>(<span class="st">"Background"</span>);
+    gui.<span class="fn">showFPS</span>();
+    gui.<span class="fn">endWindow</span>();
+}
+
 <span class="ty">SDL_AppResult</span> <span class="fn">SDL_AppInit</span>(<span class="kw">void</span>** appstate, <span class="kw">int</span> argc, <span class="kw">char</span>* argv[])
 {
     <span class="ty">App</span>* app <span class="op">=</span> <span class="kw">new</span> <span class="ty">App</span>();
@@ -355,8 +367,8 @@
     app<span class="op">-&gt;</span>renderer.<span class="fn">setCameraPosition</span>(<span class="nu">0.0f</span>, <span class="nu">0.0f</span>, <span class="op">-</span><span class="nu">6.0f</span>);
     app<span class="op">-&gt;</span>renderer.<span class="fn">init</span>();
 
-    app<span class="op">-&gt;</span>sword <span class="op">=</span> <span class="op">&amp;</span>app<span class="op">-&gt;</span>renderer.<span class="fn">createMeshObject</span>();
-    app<span class="op">-&gt;</span>sword<span class="op">-&gt;</span><span class="fn">loadFromGLTF</span>(<span class="st">"assets/sword.glb"</span>, <span class="st">"assets/sword.jpg"</span>);
+    app<span class="op">-&gt;</span>sword <span class="op">=</span> <span class="op">&amp;</span>app<span class="op">-&gt;</span>renderer.<span class="fn">createMeshObject</span>(
+        <span class="st">"assets/sword.glb"</span>, <span class="st">"assets/sword.jpg"</span>);
     app<span class="op">-&gt;</span>sword<span class="op">-&gt;</span><span class="fn">setPosition</span>(<span class="nu">0.0f</span>, <span class="nu">0.0f</span>, <span class="nu">0.0f</span>);
 
     app<span class="op">-&gt;</span>light <span class="op">=</span> <span class="op">&amp;</span>app<span class="op">-&gt;</span>renderer.<span class="fn">createPointLight</span>();
@@ -375,16 +387,10 @@
 <span class="ty">SDL_AppResult</span> <span class="fn">SDL_AppIterate</span>(<span class="kw">void</span>* appstate)
 {
     <span class="ty">App</span>* app <span class="op">=</span> <span class="kw">static_cast</span><span class="op">&lt;</span><span class="ty">App</span>*<span class="op">&gt;</span>(appstate);
-    <span class="kw">if</span> (<span class="op">!</span>app<span class="op">-&gt;</span>renderer.<span class="fn">beginFrame</span>()) <span class="kw">return</span> SDL_APP_SUCCESS;
-
-    <span class="ns">XZRenderer</span>::<span class="ty">ImGuiLayer</span><span class="op">&amp;</span> gui <span class="op">=</span> app<span class="op">-&gt;</span>renderer.<span class="fn">getGui</span>();
-    gui.<span class="fn">beginWindow</span>(<span class="st">"Controls"</span>);
-    gui.<span class="fn">exposeTransformation</span>(*app<span class="op">-&gt;</span>sword, <span class="st">"Sword"</span>);
-    gui.<span class="fn">exposeLight</span>(*app<span class="op">-&gt;</span>light, <span class="st">"Light"</span>);
-    gui.<span class="fn">showFPS</span>();
-    gui.<span class="fn">endWindow</span>();
-
-    app<span class="op">-&gt;</span>renderer.<span class="fn">endFrame</span>();
+    <span class="ns">XZRenderer</span>::<span class="ty">Renderer</span><span class="op">&amp;</span> renderer <span class="op">=</span> app<span class="op">-&gt;</span>renderer;
+    <span class="kw">if</span> (<span class="op">!</span>renderer.<span class="fn">beginFrame</span>()) <span class="kw">return</span> SDL_APP_SUCCESS;
+    <span class="fn">update_gui</span>(renderer.<span class="fn">getGui</span>(), *app);
+    renderer.<span class="fn">endFrame</span>();
     <span class="kw">return</span> SDL_APP_CONTINUE;
 }
 
@@ -443,8 +449,10 @@ SDL_AppIterate  <span class="cm">→ beginFrame() ... ImGui calls ... endFrame()
     <h3>Scene Objects <span class="badge badge-post">call after init()</span></h3>
     <table>
       <tr><th>Method</th><th>Returns</th><th>Description</th></tr>
-      <tr><td>createMeshObject()</td><td>MeshObject&amp;</td><td>Create a new mesh object</td></tr>
-      <tr><td>createCustomShaderQuad(frag_spv)</td><td>CustomShaderQuad&amp;</td><td>Create an overlay quad with a custom fragment shader</td></tr>
+      <tr><td>createMeshObject()</td><td>MeshObject&amp;</td><td>Create an empty mesh object, then call loadFromGLTF() or loadFromVertices()</td></tr>
+      <tr><td>createMeshObject(mesh_path, texture_path)</td><td>MeshObject&amp;</td><td>Create and load a glTF mesh in one call</td></tr>
+      <tr><td>createMeshObject(vertices, indices, texture_path)</td><td>MeshObject&amp;</td><td>Create and load raw vertex data in one call</td></tr>
+      <tr><td>createCustomShaderQuad(frag_spv)</td><td>CustomShaderQuad&amp;</td><td>Create a unit quad with a custom fragment shader</td></tr>
       <tr><td>createPointLight()</td><td>PointLight&amp;</td><td>Create a point light</td></tr>
     </table>
 
@@ -468,40 +476,37 @@ SDL_AppIterate  <span class="cm">→ beginFrame() ... ImGui calls ... endFrame()
     <div class="class-header">
       <span class="kw">class</span> <span class="cn">MeshObject</span> <span class="cm">// namespace XZRenderer</span>
     </div>
-    <p>A textured 3D object rendered with Blinn-Phong lighting. Created via <code>Renderer::createMeshObject()</code>.</p>
+    <p>A textured 3D object rendered with Blinn-Phong lighting. Always created via <code>Renderer::createMeshObject()</code> — never constructed directly.</p>
 
-    <h3>Loading</h3>
-    <h4>loadFromGLTF(mesh_path, texture_path)</h4>
-    <p>Load geometry from a <code>.glb</code> file and a separate texture. Normals are generated automatically via Assimp.</p>
-    <pre><code>app<span class="op">-&gt;</span>sword<span class="op">-&gt;</span><span class="fn">loadFromGLTF</span>(
-    <span class="st">"assets/sword_0.glb"</span>,
-    <span class="st">"assets/sword_0.jpg"</span>
+    <h3>renderer.createMeshObject(mesh_path, texture_path)</h3>
+    <p>Load a glTF mesh with a separately supplied texture file. Texture is not read from the glTF embed.</p>
+    <pre><code><span class="ns">XZRenderer</span>::<span class="ty">MeshObject</span>* sword <span class="op">=</span> <span class="op">&amp;</span>app<span class="op">-&gt;</span>renderer.<span class="fn">createMeshObject</span>(
+    ASSET_OUTPUT_DIR <span class="st">"sword_0.glb"</span>,
+    ASSET_OUTPUT_DIR <span class="st">"sword_0.jpg"</span>
 );</code></pre>
 
-    <h4>loadFromVertices(vertices, indices, texture_path)</h4>
-    <p>Load geometry from raw vertex and index data. Use <code>XZRenderer::Vertex</code> to supply positions, UVs and normals.</p>
-    <pre><code>app<span class="op">-&gt;</span>tetra<span class="op">-&gt;</span><span class="fn">loadFromVertices</span>(
+    <h3>renderer.createMeshObject(vertices, indices, texture_path)</h3>
+    <p>Load from raw vertex and index data with a texture file. Use <code>XZRenderer::Vertex</code> to supply positions, UVs and normals.</p>
+    <pre><code><span class="ns">XZRenderer</span>::<span class="ty">MeshObject</span>* tetra <span class="op">=</span> <span class="op">&amp;</span>app<span class="op">-&gt;</span>renderer.<span class="fn">createMeshObject</span>(
     <span class="ty">std::vector</span><span class="op">&lt;</span><span class="ns">XZRenderer</span>::<span class="ty">Vertex</span><span class="op">&gt;</span>(vertices, vertices <span class="op">+</span> <span class="nu">12</span>),
     <span class="ty">std::vector</span><span class="op">&lt;</span><span class="ty">uint32_t</span><span class="op">&gt;</span>(indices, indices <span class="op">+</span> <span class="nu">12</span>),
-    <span class="st">"assets/texture.png"</span>
+    ASSET_OUTPUT_DIR <span class="st">"texture.png"</span>
 );</code></pre>
 
-    <h3>Transform</h3>
-    <table>
-      <tr><th>Method</th><th>Description</th></tr>
-      <tr><td>setPosition(x, y, z)</td><td>World position</td></tr>
-      <tr><td>setRotation(x, y, z)</td><td>Rotation in degrees (X, Y, Z axes)</td></tr>
-      <tr><td>setScale(uniform)</td><td>Uniform scale on all axes</td></tr>
-      <tr><td>setScale(x, y, z)</td><td>Per-axis scale</td></tr>
-    </table>
+    <h3>setPosition(x, y, z)</h3>
+    <p>Set the world position of the mesh object.</p>
 
-    <h3>Accessors</h3>
-    <table>
-      <tr><th>Method</th><th>Returns</th></tr>
-      <tr><td>getPosition()</td><td>const glm::vec3&amp;</td></tr>
-      <tr><td>getRotation()</td><td>const glm::vec3&amp;</td></tr>
-      <tr><td>getScale()</td><td>const glm::vec3&amp;</td></tr>
-    </table>
+    <h3>setRotation(x, y, z)</h3>
+    <p>Set rotation in degrees around the X, Y, Z axes.</p>
+
+    <h3>setScale(uniform)</h3>
+    <p>Uniform scale on all axes.</p>
+
+    <h3>setScale(x, y, z)</h3>
+    <p>Per-axis scale.</p>
+
+    <h3>getPosition() / getRotation() / getScale()</h3>
+    <p>Read-only accessors returning <code>const glm::vec3&amp;</code>.</p>
   </section>
 
   <!-- CustomShaderQuad -->
@@ -510,21 +515,25 @@ SDL_AppIterate  <span class="cm">→ beginFrame() ... ImGui calls ... endFrame()
     <div class="class-header">
       <span class="kw">class</span> <span class="cn">CustomShaderQuad</span> <span class="cm">// namespace XZRenderer</span>
     </div>
-    <p>A flat quad rendered with a user-supplied compiled fragment shader (<code>.spv</code>). The shared vertex shader is used automatically. Useful for procedural overlays — faces, decals, effects.</p>
+    <p>A flat unit quad rendered with a user-supplied compiled fragment shader (<code>.spv</code>). The quad geometry is built-in — a unit square in the XY plane. Useful for procedural overlays such as faces, decals and effects.</p>
 
-    <h3>Creation</h3>
-    <pre><code>app<span class="op">-&gt;</span>face <span class="op">=</span> <span class="op">&amp;</span>app<span class="op">-&gt;</span>renderer.<span class="fn">createCustomShaderQuad</span>(<span class="st">"shaders/face.spv"</span>);
-app<span class="op">-&gt;</span>face<span class="op">-&gt;</span><span class="fn">setVertices</span>(positions, uvs, indices);
-app<span class="op">-&gt;</span>face<span class="op">-&gt;</span><span class="fn">setPosition</span>(<span class="nu">-2.0f</span>, <span class="nu">0.0f</span>, <span class="nu">0.0f</span>);</code></pre>
+    <h3>renderer.createCustomShaderQuad(frag_spv_path)</h3>
+    <p>Create a quad with a custom fragment shader. Supply the path to a compiled <code>.spv</code> fragment shader.</p>
+    <pre><code><span class="ns">XZRenderer</span>::<span class="ty">CustomShaderQuad</span>* face <span class="op">=</span> <span class="op">&amp;</span>app<span class="op">-&gt;</span>renderer.<span class="fn">createCustomShaderQuad</span>(SHADER_OUTPUT_DIR <span class="st">"face.spv"</span>);
+face<span class="op">-&gt;</span><span class="fn">setPosition</span>(<span class="nu">-2.0f</span>, <span class="nu">0.0f</span>, <span class="nu">0.0f</span>);
+face<span class="op">-&gt;</span><span class="fn">setScale</span>(<span class="nu">1.5f</span>, <span class="nu">2.0f</span>);</code></pre>
 
-    <h3>Methods</h3>
-    <table>
-      <tr><th>Method</th><th>Description</th></tr>
-      <tr><td>setVertices(positions, uvs, indices)</td><td>Supply quad geometry. Positions and UVs must be the same length.</td></tr>
-      <tr><td>setPosition(x, y, z)</td><td>World position</td></tr>
-      <tr><td>setRotation(x, y, z)</td><td>Rotation in degrees</td></tr>
-      <tr><td>setScale(x, y, z)</td><td>Per-axis scale</td></tr>
-    </table>
+    <h3>setPosition(x, y, z)</h3>
+    <p>Set the world position of the quad.</p>
+
+    <h3>setRotation(x, y, z)</h3>
+    <p>Set rotation in degrees around the X, Y, Z axes.</p>
+
+    <h3>setScale(x, y)</h3>
+    <p>Set width and height. Z stays 1 since the quad is flat.</p>
+
+    <h3>setScale(x, y, z) / setScale(glm::vec3)</h3>
+    <p>Full per-axis scale if needed.</p>
 
     <div class="note">
       <strong>Fragment shader:</strong> The quad uses alpha blending. Return <code>alpha = 0</code> for transparent areas. The vertex shader outputs <code>outUV</code> at <code>location 0</code>.
@@ -537,17 +546,18 @@ app<span class="op">-&gt;</span>face<span class="op">-&gt;</span><span class="fn
     <div class="class-header">
       <span class="kw">class</span> <span class="cn">PointLight</span> <span class="cm">// namespace XZRenderer</span>
     </div>
-    <p>A positional light in the scene. Affects all <code>MeshObject</code> instances via Blinn-Phong lighting. Only the first light is currently used.</p>
+    <p>A positional light in the scene. Affects all <code>MeshObject</code> instances via Blinn-Phong lighting. Only the first <code>PointLight</code> is currently used.</p>
 
-    <h3>Methods</h3>
-    <table>
-      <tr><th>Method</th><th>Description</th></tr>
-      <tr><td>setPosition(x, y, z)</td><td>Light position in world space</td></tr>
-      <tr><td>getPosition()</td><td>Returns const glm::vec3&amp;</td></tr>
-    </table>
+    <h3>renderer.createPointLight()</h3>
+    <p>Create a point light. Returns a reference owned by the Renderer.</p>
+    <pre><code><span class="ns">XZRenderer</span>::<span class="ty">PointLight</span>* light <span class="op">=</span> <span class="op">&amp;</span>app<span class="op">-&gt;</span>renderer.<span class="fn">createPointLight</span>();
+light<span class="op">-&gt;</span><span class="fn">setPosition</span>(<span class="nu">2.0f</span>, <span class="nu">2.0f</span>, <span class="op">-</span><span class="nu">2.0f</span>);</code></pre>
 
-    <pre><code>app<span class="op">-&gt;</span>light <span class="op">=</span> <span class="op">&amp;</span>app<span class="op">-&gt;</span>renderer.<span class="fn">createPointLight</span>();
-app<span class="op">-&gt;</span>light<span class="op">-&gt;</span><span class="fn">setPosition</span>(<span class="nu">2.0f</span>, <span class="nu">2.0f</span>, <span class="op">-</span><span class="nu">2.0f</span>);</code></pre>
+    <h3>setPosition(x, y, z)</h3>
+    <p>Set the light position in world space.</p>
+
+    <h3>getPosition()</h3>
+    <p>Returns <code>const glm::vec3&amp;</code>.</p>
   </section>
 
   <!-- ImGuiLayer -->
@@ -558,34 +568,44 @@ app<span class="op">-&gt;</span>light<span class="op">-&gt;</span><span class="f
     </div>
     <p>Exposes engine objects as ImGui widgets. Obtain via <code>renderer.getGui()</code>. All calls must be placed between <code>beginFrame()</code> and <code>endFrame()</code>.</p>
 
-    <h3>Window</h3>
-    <table>
-      <tr><th>Method</th><th>Description</th></tr>
-      <tr><td>beginWindow(title)</td><td>Open an ImGui window. Always pair with endWindow().</td></tr>
-      <tr><td>endWindow()</td><td>Close the current ImGui window.</td></tr>
-      <tr><td>separator()</td><td>Draw a horizontal separator line.</td></tr>
-    </table>
+    <div class="note">
+      <strong>Note:</strong> ImGui is fully contained inside XZRenderer. You never include ImGui headers in your own code.
+    </div>
 
-    <h3>Expose Methods</h3>
-    <table>
-      <tr><th>Method</th><th>Description</th></tr>
-      <tr><td>exposeTransformation(obj, label)</td><td>Position / Rotation / Scale sliders for a MeshObject or CustomShaderQuad. Click label to collapse.</td></tr>
-      <tr><td>exposeLight(light, label)</td><td>Position sliders for a PointLight.</td></tr>
-      <tr><td>exposeCamera(label)</td><td>Camera position and target sliders.</td></tr>
-      <tr><td>exposeClearColor(label)</td><td>RGBA colour picker for the background.</td></tr>
-    </table>
+    <h3>renderer.getGui()</h3>
+    <p>Returns a reference to the <code>ImGuiLayer</code>. Call this inside <code>SDL_AppIterate</code> after <code>beginFrame()</code>.</p>
 
-    <h3>Utility</h3>
-    <table>
-      <tr><th>Method</th><th>Description</th></tr>
-      <tr><td>text(str)</td><td>Display a text label.</td></tr>
-      <tr><td>showFPS()</td><td>Display current frames per second.</td></tr>
-    </table>
+    <h3>beginWindow(title)</h3>
+    <p>Open an ImGui window. Always pair with <code>endWindow()</code>.</p>
 
-    <pre><code><span class="ty">XZRenderer</span>::<span class="ty">ImGuiLayer</span><span class="op">&amp;</span> gui <span class="op">=</span> app<span class="op">-&gt;</span>renderer.<span class="fn">getGui</span>();
+    <h3>endWindow()</h3>
+    <p>Close the current ImGui window.</p>
+
+    <h3>separator()</h3>
+    <p>Draw a horizontal separator line inside a window.</p>
+
+    <h3>exposeTransformation(obj, label)</h3>
+    <p>Position / Rotation / Scale sliders for a <code>MeshObject</code> or <code>CustomShaderQuad</code>. Click the label to collapse.</p>
+
+    <h3>exposeLight(light, label)</h3>
+    <p>Position sliders for a <code>PointLight</code>.</p>
+
+    <h3>exposeCamera(label)</h3>
+    <p>Camera position and look-at target sliders.</p>
+
+    <h3>exposeClearColor(label)</h3>
+    <p>RGBA colour picker for the background clear colour.</p>
+
+    <h3>text(str)</h3>
+    <p>Display a plain text label inside the window.</p>
+
+    <h3>showFPS()</h3>
+    <p>Display current frames per second.</p>
+
+    <pre><code><span class="ns">XZRenderer</span>::<span class="ty">ImGuiLayer</span><span class="op">&amp;</span> gui <span class="op">=</span> renderer.<span class="fn">getGui</span>();
 gui.<span class="fn">beginWindow</span>(<span class="st">"Scene"</span>);
-gui.<span class="fn">exposeTransformation</span>(*app<span class="op">-&gt;</span>sword, <span class="st">"Sword"</span>);
-gui.<span class="fn">exposeLight</span>(*app<span class="op">-&gt;</span>light, <span class="st">"Light"</span>);
+gui.<span class="fn">exposeTransformation</span>(*app.sword, <span class="st">"Sword"</span>);
+gui.<span class="fn">exposeLight</span>(*app.light,  <span class="st">"Light"</span>);
 gui.<span class="fn">exposeCamera</span>(<span class="st">"Camera"</span>);
 gui.<span class="fn">exposeClearColor</span>(<span class="st">"Background"</span>);
 gui.<span class="fn">showFPS</span>();
@@ -609,6 +629,79 @@ gui.<span class="fn">endWindow</span>();</code></pre>
     {{ <span class="nu">0.0f</span>,  <span class="nu">1.0f</span>,  <span class="nu">0.0f</span>}, {<span class="nu">0.5f</span>, <span class="nu">0.0f</span>}, {<span class="nu">0.0f</span>, <span class="nu">1.0f</span>, <span class="nu">0.0f</span>}},
     {{ <span class="nu">0.0f</span>, <span class="op">-</span><span class="nu">1.0f</span>,  <span class="nu">1.15f</span>}, {<span class="nu">0.0f</span>, <span class="nu">1.0f</span>}, {<span class="nu">0.0f</span>, <span class="op">-</span><span class="nu">1.0f</span>, <span class="nu">0.0f</span>}},
 };</code></pre>
+  </section>
+
+  <!-- Feature Support -->
+  <section id="features">
+    <h2>Feature Support</h2>
+    <p>What you can and cannot render with the current version of XZRenderer.</p>
+
+    <style>
+      .feature-table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px; }
+      .feature-table th { text-align: left; padding: 10px 16px; background: var(--surface); color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+      .feature-table td { padding: 10px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+      .feature-table td:first-child { color: var(--text); font-weight: 500; }
+      .feature-table td:nth-child(2) { color: var(--muted); font-size: 13px; }
+      .feature-table tr:hover td { background: rgba(255,255,255,0.02); }
+      .check { color: #4ade80; font-size: 18px; }
+      .cross { color: #f87171; font-size: 18px; }
+      .partial { color: #fbbf24; font-size: 18px; }
+      .category-row td { background: rgba(124,106,247,0.06); color: var(--accent); font-weight: 700; font-size: 12px; letter-spacing: 0.5px; text-transform: uppercase; padding: 8px 16px; border-bottom: 1px solid var(--border); }
+      .legend { display: flex; gap: 24px; margin: 0 0 20px; font-size: 13px; color: var(--muted); }
+      .legend span { display: flex; align-items: center; gap: 6px; }
+    </style>
+
+    <div class="legend">
+      <span><span class="check">✓</span> Supported</span>
+      <span><span class="cross">✗</span> Not supported</span>
+      <span><span class="partial">◑</span> Partial</span>
+    </div>
+
+    <table class="feature-table">
+      <tr><th>Feature</th><th>Notes</th><th style="width:60px;text-align:center">Status</th></tr>
+
+      <tr class="category-row"><td colspan="3">Geometry</td></tr>
+      <tr><td>glTF / GLB mesh loading</td><td>Via Assimp. Supports multi-mesh files.</td><td style="text-align:center"><span class="check">✓</span></td></tr>
+      <tr><td>Raw vertex / index buffers</td><td>Supply your own positions, UVs and normals.</td><td style="text-align:center"><span class="check">✓</span></td></tr>
+      <tr><td>Skeletal animation</td><td>Not yet implemented.</td><td style="text-align:center"><span class="cross">✗</span></td></tr>
+      <tr><td>Morph targets / blend shapes</td><td>Not yet implemented.</td><td style="text-align:center"><span class="cross">✗</span></td></tr>
+      <tr><td>Instanced rendering</td><td>Not yet implemented.</td><td style="text-align:center"><span class="cross">✗</span></td></tr>
+
+      <tr class="category-row"><td colspan="3">Texturing</td></tr>
+      <tr><td>Diffuse texture (JPG / PNG)</td><td>Loaded via stb_image. Converted to RGBA internally.</td><td style="text-align:center"><span class="check">✓</span></td></tr>
+      <tr><td>UV mapping</td><td>UVs supplied per vertex or from glTF.</td><td style="text-align:center"><span class="check">✓</span></td></tr>
+      <tr><td>Texture atlas</td><td>Supported — pack multiple materials into one texture.</td><td style="text-align:center"><span class="check">✓</span></td></tr>
+      <tr><td>Normal maps</td><td>Not yet implemented.</td><td style="text-align:center"><span class="cross">✗</span></td></tr>
+      <tr><td>PBR (roughness / metallic)</td><td>Not yet implemented. Uses Blinn-Phong only.</td><td style="text-align:center"><span class="cross">✗</span></td></tr>
+      <tr><td>Mipmaps</td><td>Not yet implemented.</td><td style="text-align:center"><span class="cross">✗</span></td></tr>
+      <tr><td>Cubemap / skybox</td><td>Not yet implemented.</td><td style="text-align:center"><span class="cross">✗</span></td></tr>
+
+      <tr class="category-row"><td colspan="3">Lighting</td></tr>
+      <tr><td>Point light</td><td>One point light supported. Blinn-Phong shading.</td><td style="text-align:center"><span class="check">✓</span></td></tr>
+      <tr><td>Multiple lights</td><td>Only the first PointLight is used currently.</td><td style="text-align:center"><span class="partial">◑</span></td></tr>
+      <tr><td>Directional light</td><td>Not yet implemented.</td><td style="text-align:center"><span class="cross">✗</span></td></tr>
+      <tr><td>Spot light</td><td>Not yet implemented.</td><td style="text-align:center"><span class="cross">✗</span></td></tr>
+      <tr><td>Shadows</td><td>Not yet implemented.</td><td style="text-align:center"><span class="cross">✗</span></td></tr>
+      <tr><td>Ambient occlusion</td><td>Not yet implemented.</td><td style="text-align:center"><span class="cross">✗</span></td></tr>
+
+      <tr class="category-row"><td colspan="3">Overlays &amp; Effects</td></tr>
+      <tr><td>Custom shader quad</td><td>Alpha-blended flat quad with user-supplied fragment shader.</td><td style="text-align:center"><span class="check">✓</span></td></tr>
+      <tr><td>Procedural fragment shaders</td><td>Full GLSL supported in custom quad fragment shader.</td><td style="text-align:center"><span class="check">✓</span></td></tr>
+      <tr><td>Post-processing</td><td>Not yet implemented.</td><td style="text-align:center"><span class="cross">✗</span></td></tr>
+      <tr><td>Particle systems</td><td>Not yet implemented.</td><td style="text-align:center"><span class="cross">✗</span></td></tr>
+      <tr><td>Transparency / order-independent</td><td>Alpha blend supported on CustomShaderQuad only.</td><td style="text-align:center"><span class="partial">◑</span></td></tr>
+
+      <tr class="category-row"><td colspan="3">Camera</td></tr>
+      <tr><td>Perspective camera</td><td>45° FOV, adjustable position and look-at target.</td><td style="text-align:center"><span class="check">✓</span></td></tr>
+      <tr><td>Orthographic camera</td><td>Not yet implemented.</td><td style="text-align:center"><span class="cross">✗</span></td></tr>
+      <tr><td>Free-look / orbit camera</td><td>Adjustable via ImGui sliders.</td><td style="text-align:center"><span class="partial">◑</span></td></tr>
+
+      <tr class="category-row"><td colspan="3">Platform</td></tr>
+      <tr><td>Linux</td><td>Tested. X11 + Vulkan.</td><td style="text-align:center"><span class="check">✓</span></td></tr>
+      <tr><td>macOS</td><td>MoltenVK / Metal backend.</td><td style="text-align:center"><span class="check">✓</span></td></tr>
+      <tr><td>Windows</td><td>Win32 + Vulkan.</td><td style="text-align:center"><span class="check">✓</span></td></tr>
+      <tr><td>iOS / Android</td><td>Not yet implemented.</td><td style="text-align:center"><span class="cross">✗</span></td></tr>
+    </table>
   </section>
 
   <!-- Shaders -->
