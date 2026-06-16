@@ -21,10 +21,12 @@ jobs:
       - name: build
         run: cmake --build build
 
-  windows:
+windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: setup msbuild
+        uses: microsoft/setup-msbuild@v2
       - name: clone third party
         run: git clone --depth 1 https://github.com/ocornut/imgui.git third_party\imgui
       - name: install vulkan sdk
