@@ -16,7 +16,13 @@ $targets = @(
     "build\Part_06_index_buffer\Debug\",
     "build\Part_07_uniform_buffer\Debug\",
     "build\Part_08_glm\Debug\",
-    "build\Part_09_tetrahedron\Debug\"
+    "build\Part_09_tetrahedron\Debug\",
+    "build\Part_10_texture_stb_image\Debug\",
+    "build\Part_11_depth_buffer\Debug\",
+    "build\Part_12_overlay_quad\Debug\",
+    "build\Part_13_blinn_phong\Debug\",
+    "build\Part_14_assimp_mesh_loading\Debug\",
+    "build\Part_15_XZRenderer_refactor\Debug\"
 )
 
 foreach ($target in $targets) {

@@ -31,7 +31,7 @@ struct App {
     XZRenderer::MeshObject*       sword = nullptr;
     XZRenderer::CustomShaderQuad* face  = nullptr;
     XZRenderer::PointLight*       light = nullptr;
-
+    
     App() : renderer(800, 600, "XZRenderer") {}
 };
 
